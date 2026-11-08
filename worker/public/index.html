@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Nyra Mirror 🪞 Dual WhatsApp Cloud Monitor</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪞</text></svg>" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- Login Screen -->
+  <main id="login-section" class="login-wrapper">
+    <form id="login-form" class="card login-card">
+      <div class="brand-crest">🪞</div>
+      <h1>Nyra Mirror</h1>
+      <p class="muted">Dual WhatsApp Cloud Monitor & Google Drive Vault</p>
+      
+      <div class="input-group">
+        <label for="login-email">Admin Email</label>
+        <input id="login-email" type="email" placeholder="joyakter414@gmail.com" required autocomplete="username" />
+      </div>
+
+      <div class="input-group">
+        <label for="login-password">Password</label>
+        <input id="login-password" type="password" placeholder="Enter password" required autocomplete="current-password" />
+      </div>
+
+      <button type="submit" class="primary-btn">Sign In to Dashboard</button>
+      <p id="login-error" class="error-msg"></p>
+    </form>
+  </main>
+
+  <!-- Authenticated Application -->
+  <div id="app" class="app-container hidden">
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="icon">🪞</span>
+        <span class="title">Nyra Mirror</span>
+        <span class="tag">Dual Cloud</span>
+      </div>
+
+      <nav class="nav-tabs">
+        <button data-tab="devices" class="tab-btn active">📱 Devices & QR</button>
+        <button data-tab="chats" class="tab-btn">💬 Conversations</button>
+        <button data-tab="vault" class="tab-btn">☁️ Drive Vault</button>
+      </nav>
+
+      <div class="user-strip">
+        <span id="user-email-badge" class="badge">joyakter414@gmail.com</span>
+        <button id="logout-btn" class="ghost-btn small">Sign out</button>
+      </div>
+    </header>
+
+    <!-- Tab 1: Devices & Dual QR -->
+    <section id="tab-devices" class="page-section">
+      <div class="section-header">
+        <h2>WhatsApp Accounts Connection</h2>
+        <p class="muted">Link up to two WhatsApp accounts using QR code. Cloud sync runs 24/7 on GitHub Cloud.</p>
+      </div>
+
+      <div class="devices-grid">
+        <!-- Account 1 -->
+        <div class="card device-card" id="card-acc1">
+          <div class="card-head">
+            <div class="badge-title">
+              <span class="acc-num">#1</span>
+              <h3>WhatsApp Account 1</h3>
+            </div>
+            <span id="status-badge-acc1" class="status-pill status-disconnected">Disconnected</span>
+          </div>
+
+          <div id="info-box-acc1" class="account-details hidden">
+            <div class="detail-row">
+              <span class="lbl">Connected Phone:</span>
+              <strong id="phone-acc1" class="val-mono">--</strong>
+            </div>
+            <div class="detail-row">
+              <span class="lbl">Name:</span>
+              <strong id="name-acc1" class="val">--</strong>
+            </div>
+            <div class="detail-row">
+              <span class="lbl">Session Cloud Backup:</span>
+              <span class="val-green">🔒 Encrypted in R2</span>
+            </div>
+          </div>
+
+          <div id="qr-box-acc1" class="qr-container">
+            <div class="qr-frame">
+              <img id="qr-img-acc1" alt="Scan QR Code for WhatsApp 1" />
+              <div id="qr-loader-acc1" class="qr-placeholder">Waiting for QR...</div>
+            </div>
+            <p class="qr-instruct">
+              Open WhatsApp on Phone 1 → <b>Settings</b> → <b>Linked devices</b> → <b>Link a device</b> and scan this QR code.
+            </p>
+          </div>
+
+          <div class="card-actions">
+            <button id="disconnect-btn-acc1" class="danger-btn small hidden">Disconnect Account 1</button>
+          </div>
+        </div>
+
+        <!-- Account 2 -->
+        <div class="card device-card" id="card-acc2">
+          <div class="card-head">
+            <div class="badge-title">
+              <span class="acc-num">#2</span>
+              <h3>WhatsApp Account 2</h3>
+            </div>
+            <span id="status-badge-acc2" class="status-pill status-disconnected">Disconnected</span>
+          </div>
+
+          <div id="info-box-acc2" class="account-details hidden">
+            <div class="detail-row">
+              <span class="lbl">Connected Phone:</span>
+              <strong id="phone-acc2" class="val-mono">--</strong>
+            </div>
+            <div class="detail-row">
+              <span class="lbl">Name:</span>
+              <strong id="name-acc2" class="val">--</strong>
+            </div>
+            <div class="detail-row">
+              <span class="lbl">Session Cloud Backup:</span>
+              <span class="val-green">🔒 Encrypted in R2</span>
+            </div>
+          </div>
+
+          <div id="qr-box-acc2" class="qr-container">
+            <div class="qr-frame">
+              <img id="qr-img-acc2" alt="Scan QR Code for WhatsApp 2" />
+              <div id="qr-loader-acc2" class="qr-placeholder">Waiting for QR...</div>
+            </div>
+            <p class="qr-instruct">
+              Open WhatsApp on Phone 2 → <b>Settings</b> → <b>Linked devices</b> → <b>Link a device</b> and scan this QR code.
+            </p>
+          </div>
+
+          <div class="card-actions">
+            <button id="disconnect-btn-acc2" class="danger-btn small hidden">Disconnect Account 2</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2: Conversations (Dual Account Switcher + Live Viewer) -->
+    <section id="tab-chats" class="page-section hidden">
+      <!-- Account Switcher Pill -->
+      <div class="account-switcher-bar">
+        <span class="switcher-label">Select Account to View:</span>
+        <div class="switcher-buttons">
+          <button id="switch-acc1" class="switch-btn active" data-acc="acc1">
+            <span class="dot"></span>
+            <span class="btn-text">WhatsApp 1</span>
+            <span id="switch-phone-acc1" class="phone-tag">--</span>
+          </button>
+          <button id="switch-acc2" class="switch-btn" data-acc="acc2">
+            <span class="dot"></span>
+            <span class="btn-text">WhatsApp 2</span>
+            <span id="switch-phone-acc2" class="phone-tag">--</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Split Screen Viewer -->
+      <div class="chat-split-container">
+        <!-- Chat List Sidebar -->
+        <aside class="chat-sidebar card">
+          <div class="sidebar-header">
+            <h3>Chats (<span id="active-acc-label">WhatsApp 1</span>)</h3>
+            <input id="chat-search" type="search" placeholder="Search chats by name or number..." autocomplete="off" />
+          </div>
+          <div id="conversations-list" class="conversations-scroll">
+            <div class="empty-state">Loading chats...</div>
+          </div>
+        </aside>
+
+        <!-- Message Thread View -->
+        <main class="chat-main card">
+          <div class="chat-main-header">
+            <div class="contact-info">
+              <div id="chat-avatar" class="contact-avatar">WA</div>
+              <div class="contact-meta">
+                <h3 id="chat-contact-name">Select a conversation</h3>
+                <span id="chat-contact-phone" class="contact-sub">Pick a chat from the left to view messages</span>
+              </div>
+            </div>
+            <div class="chat-tools">
+              <span id="chat-account-indicator" class="pill-indicator">Account 1</span>
+            </div>
+          </div>
+
+          <div id="messages-container" class="messages-scroll">
+            <div class="empty-chat-state">No conversation selected</div>
+          </div>
+        </main>
+      </div>
+    </section>
+
+    <!-- Tab 3: Drive Vault -->
+    <section id="tab-vault" class="page-section hidden">
+      <div class="card vault-card">
+        <h2>Google Drive 5 TB Media Vault ☁️</h2>
+        <p class="muted">All images, voice notes, audio, video and documents sent or received on both WhatsApp accounts are backed up to your Google Drive.</p>
+        
+        <div class="vault-stats">
+          <div class="stat-box">
+            <span class="stat-val">5.00 TB</span>
+            <span class="stat-lbl">Total Drive Space</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-val highlight">4.71 TB</span>
+            <span class="stat-lbl">Free Space Remaining</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-val">Connected</span>
+            <span class="stat-lbl">OAuth 2.0 Status</span>
+          </div>
+        </div>
+
+        <div class="vault-folder-info">
+          <h3>Dedicated Media Folder:</h3>
+          <code>Nyra Mirror WhatsApp Media</code>
+          <p class="muted" style="margin-top: 8px;">Folder ID: <code>19Onv9HwLXhoZjMTc5UvoxsrDyqr5UWy2</code></p>
+          <a href="https://drive.google.com/drive/folders/19Onv9HwLXhoZjMTc5UvoxsrDyqr5UWy2" target="_blank" rel="noopener" class="primary-btn small-btn" style="display: inline-block; margin-top: 14px; text-decoration: none;">
+            📂 Open Media Folder in Google Drive
+          </a>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Fullscreen Media Lightbox Modal -->
+  <div id="lightbox-modal" class="lightbox-overlay hidden">
+    <button id="lightbox-close" class="lightbox-close-btn">&times;</button>
+    <div class="lightbox-content">
+      <img id="lightbox-img" src="" alt="Enlarged media" />
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

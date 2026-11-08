@@ -1,0 +1,421 @@
+// Nyra Mirror — Dual WhatsApp Cloud Client
+
+let activeTab = "devices";
+let activeAccount = "acc1";
+let activeChatId = null;
+let currentChats = [];
+let statusPollTimer = null;
+let chatPollTimer = null;
+
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+
+// ─── App Initialization ──────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", async () => {
+  setupEventListeners();
+  await checkAuth();
+});
+
+// ─── Authentication ──────────────────────────────────────────────────────────
+async function checkAuth() {
+  try {
+    const res = await fetch("/api/session");
+    const data = await res.json();
+    if (data.authenticated) {
+      showApp(data.email);
+    } else {
+      showLogin();
+    }
+  } catch {
+    showLogin();
+  }
+}
+
+function showLogin() {
+  clearInterval(statusPollTimer);
+  clearInterval(chatPollTimer);
+  $("#login-section").classList.remove("hidden");
+  $("#app").classList.add("hidden");
+}
+
+function showApp(email) {
+  $("#login-section").classList.add("hidden");
+  $("#app").classList.remove("hidden");
+  if (email) $("#user-email-badge").textContent = email;
+
+  startStatusPolling();
+  loadChats();
+}
+
+// ─── Event Listeners ─────────────────────────────────────────────────────────
+function setupEventListeners() {
+  // Login Form
+  $("#login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("#login-error").textContent = "";
+    const email = $("#login-email").value.trim();
+    const password = $("#login-password").value.trim();
+
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showApp(data.email);
+      } else {
+        $("#login-error").textContent = data.error || "Login failed";
+      }
+    } catch {
+      $("#login-error").textContent = "Unable to connect to server";
+    }
+  });
+
+  // Logout
+  $("#logout-btn").addEventListener("click", async () => {
+    await fetch("/api/logout", { method: "POST" });
+    showLogin();
+  });
+
+  // Tab Navigation
+  $$(".tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      $$(".tab-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      activeTab = btn.dataset.tab;
+
+      $$(".page-section").forEach((sec) => sec.classList.add("hidden"));
+      $(`#tab-${activeTab}`).classList.remove("hidden");
+
+      if (activeTab === "chats") {
+        loadChats();
+      }
+    });
+  });
+
+  // Account Switcher in Conversations
+  $("#switch-acc1").addEventListener("click", () => switchAccount("acc1"));
+  $("#switch-acc2").addEventListener("click", () => switchAccount("acc2"));
+
+  // Chat Search
+  $("#chat-search").addEventListener("input", (e) => {
+    const q = e.target.value.toLowerCase().trim();
+    renderChatList(
+      currentChats.filter(
+        (c) =>
+          (c.name && c.name.toLowerCase().includes(q)) ||
+          (c.notify_name && c.notify_name.toLowerCase().includes(q)) ||
+          (c.phone && c.phone.includes(q)) ||
+          (c.chat_id && c.chat_id.includes(q))
+      )
+    );
+  });
+
+  // Disconnect Buttons
+  $("#disconnect-btn-acc1").addEventListener("click", () => disconnectAccount("acc1"));
+  $("#disconnect-btn-acc2").addEventListener("click", () => disconnectAccount("acc2"));
+
+  // Lightbox Close
+  $("#lightbox-close").addEventListener("click", closeLightbox);
+  $("#lightbox-modal").addEventListener("click", (e) => {
+    if (e.target === $("#lightbox-modal")) closeLightbox();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeLightbox();
+  });
+}
+
+// ─── Dual Status & QR Polling ────────────────────────────────────────────────
+function startStatusPolling() {
+  fetchStatus();
+  statusPollTimer = setInterval(fetchStatus, 3000);
+}
+
+async function fetchStatus() {
+  try {
+    const res = await fetch("/api/status");
+    if (!res.ok) {
+      if (res.status === 401) showLogin();
+      return;
+    }
+    const data = await res.json();
+    updateDeviceUI("acc1", data.acc1);
+    updateDeviceUI("acc2", data.acc2);
+  } catch (err) {
+    console.error("Status fetch error:", err);
+  }
+}
+
+function updateDeviceUI(accId, status) {
+  const badge = $(`#status-badge-${accId}`);
+  const infoBox = $(`#info-box-${accId}`);
+  const qrBox = $(`#qr-box-${accId}`);
+  const qrImg = $(`#qr-img-${accId}`);
+  const qrLoader = $(`#qr-loader-${accId}`);
+  const phone = $(`#phone-${accId}`);
+  const name = $(`#name-${accId}`);
+  const disBtn = $(`#disconnect-btn-${accId}`);
+  const switchPhone = $(`#switch-phone-${accId}`);
+
+  if (!status) return;
+
+  badge.className = "status-pill";
+
+  if (status.state === "connected") {
+    badge.classList.add("status-connected");
+    badge.textContent = "🟢 Connected";
+    infoBox.classList.remove("hidden");
+    qrBox.classList.add("hidden");
+    disBtn.classList.remove("hidden");
+
+    const phoneNum = status.me?.pn ? `+${status.me.pn.replace(/@.*$/, "")}` : "Connected";
+    phone.textContent = phoneNum;
+    name.textContent = status.me?.name || status.me?.notify || "WhatsApp User";
+    switchPhone.textContent = phoneNum;
+  } else if (status.state === "qr" && status.qr) {
+    badge.classList.add("status-waiting");
+    badge.textContent = "🟡 Scan QR Code";
+    infoBox.classList.add("hidden");
+    qrBox.classList.remove("hidden");
+    qrLoader.classList.add("hidden");
+    qrImg.src = status.qr;
+    qrImg.style.display = "block";
+    disBtn.classList.add("hidden");
+    switchPhone.textContent = "Waiting QR";
+  } else if (status.state === "connecting" || status.state === "starting") {
+    badge.classList.add("status-waiting");
+    badge.textContent = "⏳ Connecting...";
+    infoBox.classList.add("hidden");
+    qrBox.classList.remove("hidden");
+    qrImg.style.display = "none";
+    qrLoader.classList.remove("hidden");
+    qrLoader.textContent = "Connecting to WhatsApp...";
+    disBtn.classList.add("hidden");
+    switchPhone.textContent = "Connecting";
+  } else {
+    badge.classList.add("status-disconnected");
+    badge.textContent = "🔴 Disconnected";
+    infoBox.classList.add("hidden");
+    qrBox.classList.remove("hidden");
+    qrImg.style.display = "none";
+    qrLoader.classList.remove("hidden");
+    qrLoader.textContent = "Gateway Offline / Waiting";
+    disBtn.classList.add("hidden");
+    switchPhone.textContent = "--";
+  }
+}
+
+async function disconnectAccount(accId) {
+  if (!confirm(`Are you sure you want to disconnect WhatsApp Account ${accId === "acc1" ? "1" : "2"}?`)) return;
+  try {
+    await fetch("/api/disconnect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account: accId }),
+    });
+    fetchStatus();
+  } catch (err) {
+    alert("Error disconnecting account: " + err.message);
+  }
+}
+
+// ─── Conversations (Dual Account Switching & Chat List) ──────────────────────
+function switchAccount(accId) {
+  if (activeAccount === accId) return;
+  activeAccount = accId;
+
+  $("#switch-acc1").classList.toggle("active", accId === "acc1");
+  $("#switch-acc2").classList.toggle("active", accId === "acc2");
+  $("#active-acc-label").textContent = accId === "acc1" ? "WhatsApp 1" : "WhatsApp 2";
+  $("#chat-account-indicator").textContent = accId === "acc1" ? "Account 1" : "Account 2";
+
+  activeChatId = null;
+  resetChatPane();
+  loadChats();
+}
+
+async function loadChats() {
+  const container = $("#conversations-list");
+  try {
+    const res = await fetch(`/api/chats?account=${activeAccount}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    currentChats = data.chats || [];
+    renderChatList(currentChats);
+  } catch (err) {
+    container.innerHTML = `<div class="empty-state">Error loading chats</div>`;
+  }
+}
+
+function renderChatList(chats) {
+  const container = $("#conversations-list");
+  if (!chats || chats.length === 0) {
+    container.innerHTML = `<div class="empty-state">No conversations found for ${activeAccount === "acc1" ? "WhatsApp 1" : "WhatsApp 2"}</div>`;
+    return;
+  }
+
+  container.innerHTML = "";
+  chats.forEach((chat) => {
+    const item = document.createElement("div");
+    item.className = "chat-item";
+    if (chat.chat_id === activeChatId) item.classList.add("active");
+
+    const displayName = chat.name || chat.notify_name || formatPhone(chat.phone) || chat.chat_id.replace(/@.*$/, "");
+    const initials = getInitials(displayName);
+    const timeStr = formatTimestamp(chat.last_at);
+
+    item.innerHTML = `
+      <div class="chat-item-avatar">
+        ${chat.avatar_url ? `<img src="${escapeHtml(chat.avatar_url)}" alt="" />` : initials}
+      </div>
+      <div class="chat-item-content">
+        <div class="chat-item-top">
+          <span class="chat-item-name">${escapeHtml(displayName)}</span>
+          <span class="chat-item-time">${timeStr}</span>
+        </div>
+        <div class="chat-item-bottom">
+          <span class="chat-item-snippet">${escapeHtml(chat.last_msg || "No messages yet")}</span>
+          ${chat.unread > 0 ? `<span class="unread-badge">${chat.unread}</span>` : ""}
+        </div>
+      </div>
+    `;
+
+    item.addEventListener("click", () => selectChat(chat));
+    container.appendChild(item);
+  });
+}
+
+function selectChat(chat) {
+  activeChatId = chat.chat_id;
+  $$(".chat-item").forEach((el) => el.classList.remove("active"));
+
+  const displayName = chat.name || chat.notify_name || formatPhone(chat.phone) || chat.chat_id.replace(/@.*$/, "");
+  $("#chat-contact-name").textContent = displayName;
+  $("#chat-contact-phone").textContent = formatPhone(chat.phone) || chat.chat_id;
+
+  const avatar = $("#chat-avatar");
+  if (chat.avatar_url) {
+    avatar.innerHTML = `<img src="${escapeHtml(chat.avatar_url)}" alt="" style="width:100%;height:100%;object-fit:cover;" />`;
+  } else {
+    avatar.textContent = getInitials(displayName);
+  }
+
+  loadMessages();
+  clearInterval(chatPollTimer);
+  chatPollTimer = setInterval(loadMessages, 3000);
+}
+
+function resetChatPane() {
+  clearInterval(chatPollTimer);
+  $("#chat-contact-name").textContent = "Select a conversation";
+  $("#chat-contact-phone").textContent = "Pick a chat from the left to view messages";
+  $("#chat-avatar").textContent = "WA";
+  $("#messages-container").innerHTML = `<div class="empty-chat-state">No conversation selected</div>`;
+}
+
+async function loadMessages() {
+  if (!activeChatId) return;
+  const container = $("#messages-container");
+
+  try {
+    const res = await fetch(`/api/messages?account=${activeAccount}&chatId=${encodeURIComponent(activeChatId)}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    renderMessages(data.messages || []);
+  } catch (err) {
+    console.error("Messages load error:", err);
+  }
+}
+
+function renderMessages(messages) {
+  const container = $("#messages-container");
+  if (!messages || messages.length === 0) {
+    container.innerHTML = `<div class="empty-chat-state">No messages in this chat</div>`;
+    return;
+  }
+
+  const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 100;
+
+  container.innerHTML = "";
+  messages.forEach((m) => {
+    const bubble = document.createElement("div");
+    bubble.className = `msg-bubble ${m.role === "assistant" ? "msg-out" : "msg-in"}`;
+
+    let mediaHtml = "";
+    if (m.media_url || m.media_id) {
+      const mediaSrc = m.media_url || `/api/media/${m.media_id}`;
+      if (m.media_type === "image") {
+        mediaHtml = `<div class="msg-media"><img src="${escapeHtml(mediaSrc)}" alt="Photo" onclick="openLightbox('${escapeHtml(mediaSrc)}')" /></div>`;
+      } else if (m.media_type === "audio") {
+        mediaHtml = `<div class="msg-media"><audio controls preload="none" src="${escapeHtml(mediaSrc)}"></audio></div>`;
+      } else if (m.media_type === "video") {
+        mediaHtml = `<div class="msg-media"><video controls preload="metadata" src="${escapeHtml(mediaSrc)}"></video></div>`;
+      } else if (m.media_type === "document") {
+        mediaHtml = `<div class="msg-media"><a href="${escapeHtml(mediaSrc)}" target="_blank" class="msg-media-doc">📄 Download File</a></div>`;
+      }
+    }
+
+    const senderLabel = m.role === "user" && m.sender_name ? `<span class="msg-sender">${escapeHtml(m.sender_name)}</span>` : "";
+    const driveBadge = m.media_id ? `<span class="drive-badge" title="Stored in 5 TB Google Drive">☁️ Drive</span>` : "";
+
+    bubble.innerHTML = `
+      ${senderLabel}
+      ${mediaHtml}
+      ${m.content ? `<div class="msg-text">${escapeHtml(m.content)}</div>` : ""}
+      <div class="msg-meta">
+        ${driveBadge}
+        <span>${formatTimestamp(m.created_at)}</span>
+      </div>
+    `;
+
+    container.appendChild(bubble);
+  });
+
+  if (isAtBottom) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+// ─── Lightbox Modal ──────────────────────────────────────────────────────────
+function openLightbox(url) {
+  $("#lightbox-img").src = url;
+  $("#lightbox-modal").classList.remove("hidden");
+}
+
+function closeLightbox() {
+  $("#lightbox-modal").classList.add("hidden");
+  $("#lightbox-img").src = "";
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function getInitials(name) {
+  if (!name) return "WA";
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
+function formatPhone(p) {
+  if (!p) return "";
+  const digits = p.replace(/\D/g, "");
+  return digits ? `+${digits}` : "";
+}
+
+function formatTimestamp(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function escapeHtml(str) {
+  if (!str) return "";
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}

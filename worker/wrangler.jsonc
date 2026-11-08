@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nyra-mirror",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nyra-mirror-db",
+      "database_id": "00f3403d-b8aa-4ce5-b86f-a7acb450248e"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "nyra-mirror-store"
+    }
+  ],
+  "vars": {
+    "ADMIN_EMAIL": "joyakter414@gmail.com",
+    "GDRIVE_FOLDER_ID": "19Onv9HwLXhoZjMTc5UvoxsrDyqr5UWy2"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
