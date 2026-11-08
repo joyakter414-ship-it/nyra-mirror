@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="robots" content="noindex" />
-  <title>Nyra Mirror 🪞 Dual WhatsApp Cloud Monitor</title>
+  <title>Nyra Mirror 🪞 Dual WhatsApp Web</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪞</text></svg>" />
   <link rel="stylesheet" href="/style.css" />
 </head>
@@ -14,7 +14,7 @@
     <form id="login-form" class="card login-card">
       <div class="brand-crest">🪞</div>
       <h1>Nyra Mirror</h1>
-      <p class="muted">Dual WhatsApp Cloud Monitor & Google Drive Vault</p>
+      <p class="muted">Dual WhatsApp Web & Remote Monitor</p>
       
       <div class="input-group">
         <label for="login-email">Admin Email</label>
@@ -38,13 +38,12 @@
       <div class="brand">
         <span class="icon">🪞</span>
         <span class="title">Nyra Mirror</span>
-        <span class="tag">Dual Cloud</span>
+        <span class="tag">Dual WhatsApp</span>
       </div>
 
       <nav class="nav-tabs">
-        <button data-tab="devices" class="tab-btn active">📱 Devices & QR</button>
-        <button data-tab="chats" class="tab-btn">💬 Conversations</button>
-        <button data-tab="vault" class="tab-btn">☁️ Drive Vault</button>
+        <button data-tab="devices" class="tab-btn active">📱 WhatsApp Devices</button>
+        <button data-tab="chats" class="tab-btn">💬 WhatsApp Chats</button>
       </nav>
 
       <div class="user-strip">
@@ -57,7 +56,7 @@
     <section id="tab-devices" class="page-section">
       <div class="section-header">
         <h2>WhatsApp Accounts Connection</h2>
-        <p class="muted">Link up to two WhatsApp accounts using QR code. Cloud sync runs 24/7 on GitHub Cloud.</p>
+        <p class="muted">Link your two WhatsApp accounts using QR code. Cloud sync runs 24/7 in background.</p>
       </div>
 
       <div class="devices-grid">
@@ -81,8 +80,8 @@
               <strong id="name-acc1" class="val">--</strong>
             </div>
             <div class="detail-row">
-              <span class="lbl">Session Cloud Backup:</span>
-              <span class="val-green">🔒 Encrypted in R2</span>
+              <span class="lbl">Cloud Session:</span>
+              <span class="val-green">🔒 24/7 Active</span>
             </div>
           </div>
 
@@ -92,7 +91,7 @@
               <div id="qr-loader-acc1" class="qr-placeholder">Waiting for QR...</div>
             </div>
             <p class="qr-instruct">
-              Open WhatsApp on Phone 1 → <b>Settings</b> → <b>Linked devices</b> → <b>Link a device</b> and scan this QR code.
+              Open WhatsApp 1 on Phone → <b>Settings</b> → <b>Linked devices</b> → <b>Link a device</b> and scan this QR code.
             </p>
           </div>
 
@@ -121,8 +120,8 @@
               <strong id="name-acc2" class="val">--</strong>
             </div>
             <div class="detail-row">
-              <span class="lbl">Session Cloud Backup:</span>
-              <span class="val-green">🔒 Encrypted in R2</span>
+              <span class="lbl">Cloud Session:</span>
+              <span class="val-green">🔒 24/7 Active</span>
             </div>
           </div>
 
@@ -132,7 +131,7 @@
               <div id="qr-loader-acc2" class="qr-placeholder">Waiting for QR...</div>
             </div>
             <p class="qr-instruct">
-              Open WhatsApp on Phone 2 → <b>Settings</b> → <b>Linked devices</b> → <b>Link a device</b> and scan this QR code.
+              Open WhatsApp 2 on Phone → <b>Settings</b> → <b>Linked devices</b> → <b>Link a device</b> and scan this QR code.
             </p>
           </div>
 
@@ -143,11 +142,11 @@
       </div>
     </section>
 
-    <!-- Tab 2: Conversations (Dual Account Switcher + Live Viewer) -->
+    <!-- Tab 2: Conversations (Dual Account Switcher + Live WhatsApp Web Style Viewer) -->
     <section id="tab-chats" class="page-section hidden">
       <!-- Account Switcher Pill -->
       <div class="account-switcher-bar">
-        <span class="switcher-label">Select Account to View:</span>
+        <span class="switcher-label">Active WhatsApp:</span>
         <div class="switcher-buttons">
           <button id="switch-acc1" class="switch-btn active" data-acc="acc1">
             <span class="dot"></span>
@@ -162,7 +161,7 @@
         </div>
       </div>
 
-      <!-- Split Screen Viewer -->
+      <!-- Split Screen Viewer (Lady Jane Clean White WhatsApp Theme) -->
       <div class="chat-split-container">
         <!-- Chat List Sidebar -->
         <aside class="chat-sidebar card">
@@ -186,7 +185,7 @@
               </div>
             </div>
             <div class="chat-tools">
-              <span id="chat-account-indicator" class="pill-indicator">Account 1</span>
+              <span id="chat-account-indicator" class="pill-indicator">WhatsApp 1</span>
             </div>
           </div>
 
@@ -194,38 +193,6 @@
             <div class="empty-chat-state">No conversation selected</div>
           </div>
         </main>
-      </div>
-    </section>
-
-    <!-- Tab 3: Drive Vault -->
-    <section id="tab-vault" class="page-section hidden">
-      <div class="card vault-card">
-        <h2>Google Drive 5 TB Media Vault ☁️</h2>
-        <p class="muted">All images, voice notes, audio, video and documents sent or received on both WhatsApp accounts are backed up to your Google Drive.</p>
-        
-        <div class="vault-stats">
-          <div class="stat-box">
-            <span class="stat-val">5.00 TB</span>
-            <span class="stat-lbl">Total Drive Space</span>
-          </div>
-          <div class="stat-box">
-            <span class="stat-val highlight">4.71 TB</span>
-            <span class="stat-lbl">Free Space Remaining</span>
-          </div>
-          <div class="stat-box">
-            <span class="stat-val">Connected</span>
-            <span class="stat-lbl">OAuth 2.0 Status</span>
-          </div>
-        </div>
-
-        <div class="vault-folder-info">
-          <h3>Dedicated Media Folder:</h3>
-          <code>Nyra Mirror WhatsApp Media</code>
-          <p class="muted" style="margin-top: 8px;">Folder ID: <code>19Onv9HwLXhoZjMTc5UvoxsrDyqr5UWy2</code></p>
-          <a href="https://drive.google.com/drive/folders/19Onv9HwLXhoZjMTc5UvoxsrDyqr5UWy2" target="_blank" rel="noopener" class="primary-btn small-btn" style="display: inline-block; margin-top: 14px; text-decoration: none;">
-            📂 Open Media Folder in Google Drive
-          </a>
-        </div>
       </div>
     </section>
   </div>

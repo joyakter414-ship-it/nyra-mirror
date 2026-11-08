@@ -1,4 +1,4 @@
-// Nyra Mirror — Dual WhatsApp Cloud Client (Lady Jane White Conversation Theme)
+// Nyra Mirror — Dual WhatsApp Web Client
 
 let activeTab = "devices";
 let activeAccount = "acc1";
@@ -229,7 +229,7 @@ function switchAccount(accId) {
   $("#switch-acc1").classList.toggle("active", accId === "acc1");
   $("#switch-acc2").classList.toggle("active", accId === "acc2");
   $("#active-acc-label").textContent = accId === "acc1" ? "WhatsApp 1" : "WhatsApp 2";
-  $("#chat-account-indicator").textContent = accId === "acc1" ? "Account 1" : "Account 2";
+  $("#chat-account-indicator").textContent = accId === "acc1" ? "WhatsApp 1" : "WhatsApp 2";
 
   activeChatId = null;
   resetChatPane();
@@ -333,6 +333,7 @@ async function loadMessages() {
   }
 }
 
+// ─── Render Messages with Authentic WhatsApp In-Chat Media Experience ────────
 function renderMessages(messages) {
   const container = $("#messages-container");
   if (!messages || messages.length === 0) {
@@ -340,14 +341,15 @@ function renderMessages(messages) {
     return;
   }
 
-  const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 100;
+  const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 120;
 
   container.innerHTML = "";
   messages.forEach((m) => {
     const bubble = document.createElement("div");
-    bubble.className = `msg-bubble ${m.role === "assistant" ? "msg-out" : "msg-in"}`;
+    const isOut = m.role === "assistant";
+    bubble.className = `msg-bubble ${isOut ? "msg-out" : "msg-in"}`;
 
-    // Quoted reply indication (like Lady Jane)
+    // Quoted reply box (replies rendered neatly inside bubble)
     let quotedHtml = "";
     if (m.quoted_text) {
       quotedHtml = `
@@ -358,47 +360,47 @@ function renderMessages(messages) {
       `;
     }
 
-    // Media rendering (Photos, Voice Notes, Videos, Documents)
+    // Media rendered 100% inside the chat bubble (like real WhatsApp on phone!)
     let mediaHtml = "";
     if (m.media_url || m.media_id) {
       const mediaSrc = m.media_url || `/api/media/${m.media_id}`;
-      const driveViewLink = m.media_id ? `https://drive.google.com/file/d/${m.media_id}/view` : mediaSrc;
 
       if (m.media_type === "image" || m.media_type === "sticker") {
         mediaHtml = `
-          <div class="msg-media">
-            <img src="${escapeHtml(mediaSrc)}" alt="Photo" onclick="openLightbox('${escapeHtml(mediaSrc)}')" />
+          <div class="wa-image-box">
+            <img src="${escapeHtml(mediaSrc)}" alt="Photo" onclick="openLightbox('${escapeHtml(mediaSrc)}')" loading="lazy" />
           </div>
         `;
       } else if (m.media_type === "audio") {
         mediaHtml = `
-          <div class="msg-media-audio-box">
-            <div style="font-size:11px;font-weight:600;margin-bottom:2px;display:flex;align-items:center;gap:4px;color:#0284c7;">
-              <span>🎤 Voice Message</span>
-              <span style="font-size:10px;background:#e2e8f0;padding:1px 6px;border-radius:4px;color:#0f172a;">Google Drive</span>
+          <div class="wa-voice-bubble">
+            <div class="wa-voice-mic">🎤</div>
+            <div class="wa-voice-player">
+              <audio controls preload="metadata" src="${escapeHtml(mediaSrc)}"></audio>
             </div>
-            <audio controls preload="metadata" src="${escapeHtml(mediaSrc)}" class="msg-media-audio"></audio>
           </div>
         `;
       } else if (m.media_type === "video") {
         mediaHtml = `
-          <div class="msg-media">
-            <video controls preload="metadata" src="${escapeHtml(mediaSrc)}" class="msg-media-video"></video>
+          <div class="wa-video-box">
+            <video controls preload="metadata" src="${escapeHtml(mediaSrc)}"></video>
           </div>
         `;
       } else if (m.media_type === "document") {
         mediaHtml = `
-          <div class="msg-media">
-            <a href="${escapeHtml(driveViewLink)}" target="_blank" rel="noopener" class="msg-media-doc">
-              📄 Download Document (Google Drive)
-            </a>
-          </div>
+          <a href="${escapeHtml(mediaSrc)}" target="_blank" download class="wa-doc-box">
+            <div class="wa-doc-icon">📄</div>
+            <div class="wa-doc-info">
+              <div class="wa-doc-name">${escapeHtml(m.content || "Document")}</div>
+              <div class="wa-doc-sub">Tap to download / view</div>
+            </div>
+            <div class="wa-doc-arrow">⬇️</div>
+          </a>
         `;
       }
     }
 
-    const senderLabel = m.role === "user" && m.sender_name ? `<span class="msg-sender">${escapeHtml(m.sender_name)}</span>` : "";
-    const driveBadge = m.media_id ? `<span class="drive-badge" title="Saved in 5 TB Google Drive">☁️ Drive</span>` : "";
+    const senderLabel = !isOut && m.sender_name ? `<span class="msg-sender">${escapeHtml(m.sender_name)}</span>` : "";
 
     const isPlaceholder =
       m.media_type &&
@@ -413,8 +415,8 @@ function renderMessages(messages) {
       ${mediaHtml}
       ${m.content && !isPlaceholder ? `<div class="msg-text">${escapeHtml(m.content)}</div>` : ""}
       <div class="msg-meta">
-        ${driveBadge}
         <span>${formatTimestamp(m.created_at)}</span>
+        ${isOut ? `<span class="wa-ticks">✓✓</span>` : ""}
       </div>
     `;
 
@@ -448,7 +450,7 @@ function getInitials(name) {
 
 function getAvatarColor(str) {
   const colors = [
-    "#0284c7", "#059669", "#d97706", "#dc2626", "#7c3aed",
+    "#00a884", "#0284c7", "#059669", "#d97706", "#dc2626", "#7c3aed",
     "#db2777", "#4f46e5", "#0891b2", "#65a30d", "#ea580c"
   ];
   let hash = 0;
