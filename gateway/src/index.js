@@ -174,6 +174,42 @@ class WhatsAppAccountManager {
       mediaMime = content.documentMessage.mimetype || "application/octet-stream";
       text = content.documentMessage.title || content.documentMessage.fileName || "";
       mediaFilename = content.documentMessage.fileName || `wa_doc_${Date.now()}`;
+    } else if (content.stickerMessage) {
+      mediaType = "sticker";
+      mediaMime = content.stickerMessage.mimetype || "image/webp";
+      mediaFilename = `wa_stk_${Date.now()}.webp`;
+    }
+
+    // Quoted reply extraction
+    const ctx =
+      content.extendedTextMessage?.contextInfo ||
+      content.imageMessage?.contextInfo ||
+      content.videoMessage?.contextInfo ||
+      content.audioMessage?.contextInfo ||
+      content.documentMessage?.contextInfo ||
+      content.stickerMessage?.contextInfo;
+
+    let quotedText = null;
+    let quotedSender = null;
+    if (ctx?.quotedMessage) {
+      const qContent = normalizeMessageContent(ctx.quotedMessage);
+      quotedText =
+        qContent?.conversation ||
+        qContent?.extendedTextMessage?.text ||
+        qContent?.imageMessage?.caption ||
+        qContent?.videoMessage?.caption ||
+        (qContent?.imageMessage
+          ? "[PHOTO]"
+          : qContent?.audioMessage
+          ? "[VOICE NOTE]"
+          : qContent?.videoMessage
+          ? "[VIDEO]"
+          : qContent?.documentMessage
+          ? "[DOCUMENT]"
+          : "[MESSAGE]");
+      quotedSender = ctx.participant
+        ? this.contacts.get(ctx.participant) || ctx.participant.replace(/@.*$/, "")
+        : null;
     }
 
     let mediaUrl = null;
@@ -223,6 +259,8 @@ class WhatsAppAccountManager {
       media_url: mediaUrl,
       media_id: mediaId,
       media_mime: mediaMime,
+      quoted_text: quotedText,
+      quoted_sender: quotedSender,
     };
 
     const chatRecord = {

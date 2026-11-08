@@ -14,6 +14,8 @@ export interface DBMessage {
   media_url?: string | null;
   media_id?: string | null;
   media_mime?: string | null;
+  quoted_text?: string | null;
+  quoted_sender?: string | null;
   deleted_at?: number;
   deleted_by?: string | null;
 }
@@ -64,12 +66,14 @@ export async function kvSet(env: AppEnv, key: string, value: unknown): Promise<v
 
 export async function recordMessage(env: AppEnv, m: DBMessage): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO messages (id, account_id, chat_id, role, sender, sender_name, content, source, created_at, media_type, media_url, media_id, media_mime, deleted_at, deleted_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO messages (id, account_id, chat_id, role, sender, sender_name, content, source, created_at, media_type, media_url, media_id, media_mime, quoted_text, quoted_sender, deleted_at, deleted_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id, account_id) DO UPDATE SET
        content = excluded.content,
        media_url = coalesce(excluded.media_url, messages.media_url),
        media_id = coalesce(excluded.media_id, messages.media_id),
+       quoted_text = coalesce(excluded.quoted_text, messages.quoted_text),
+       quoted_sender = coalesce(excluded.quoted_sender, messages.quoted_sender),
        deleted_at = excluded.deleted_at,
        deleted_by = excluded.deleted_by`
   )
@@ -87,6 +91,8 @@ export async function recordMessage(env: AppEnv, m: DBMessage): Promise<void> {
       m.media_url || null,
       m.media_id || null,
       m.media_mime || null,
+      m.quoted_text || null,
+      m.quoted_sender || null,
       m.deleted_at || 0,
       m.deleted_by || null
     )

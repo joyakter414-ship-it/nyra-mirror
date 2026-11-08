@@ -1,4 +1,4 @@
-// Nyra Mirror — Dual WhatsApp Cloud Client
+// Nyra Mirror — Dual WhatsApp Cloud Client (Lady Jane White Conversation Theme)
 
 let activeTab = "devices";
 let activeAccount = "acc1";
@@ -264,10 +264,11 @@ function renderChatList(chats) {
 
     const displayName = chat.name || chat.notify_name || formatPhone(chat.phone) || chat.chat_id.replace(/@.*$/, "");
     const initials = getInitials(displayName);
+    const avatarColor = getAvatarColor(displayName || initials);
     const timeStr = formatTimestamp(chat.last_at);
 
     item.innerHTML = `
-      <div class="chat-item-avatar">
+      <div class="chat-item-avatar" style="background: ${avatarColor};">
         ${chat.avatar_url ? `<img src="${escapeHtml(chat.avatar_url)}" alt="" />` : initials}
       </div>
       <div class="chat-item-content">
@@ -296,6 +297,8 @@ function selectChat(chat) {
   $("#chat-contact-phone").textContent = formatPhone(chat.phone) || chat.chat_id;
 
   const avatar = $("#chat-avatar");
+  const avatarColor = getAvatarColor(displayName);
+  avatar.style.background = avatarColor;
   if (chat.avatar_url) {
     avatar.innerHTML = `<img src="${escapeHtml(chat.avatar_url)}" alt="" style="width:100%;height:100%;object-fit:cover;" />`;
   } else {
@@ -312,6 +315,7 @@ function resetChatPane() {
   $("#chat-contact-name").textContent = "Select a conversation";
   $("#chat-contact-phone").textContent = "Pick a chat from the left to view messages";
   $("#chat-avatar").textContent = "WA";
+  $("#chat-avatar").style.background = "#334155";
   $("#messages-container").innerHTML = `<div class="empty-chat-state">No conversation selected</div>`;
 }
 
@@ -343,27 +347,71 @@ function renderMessages(messages) {
     const bubble = document.createElement("div");
     bubble.className = `msg-bubble ${m.role === "assistant" ? "msg-out" : "msg-in"}`;
 
+    // Quoted reply indication (like Lady Jane)
+    let quotedHtml = "";
+    if (m.quoted_text) {
+      quotedHtml = `
+        <div class="msg-quoted">
+          <div class="msg-quoted-sender">${escapeHtml(m.quoted_sender || "Reply")}</div>
+          <div class="msg-quoted-text">${escapeHtml(m.quoted_text)}</div>
+        </div>
+      `;
+    }
+
+    // Media rendering (Photos, Voice Notes, Videos, Documents)
     let mediaHtml = "";
     if (m.media_url || m.media_id) {
       const mediaSrc = m.media_url || `/api/media/${m.media_id}`;
-      if (m.media_type === "image") {
-        mediaHtml = `<div class="msg-media"><img src="${escapeHtml(mediaSrc)}" alt="Photo" onclick="openLightbox('${escapeHtml(mediaSrc)}')" /></div>`;
+      const driveViewLink = m.media_id ? `https://drive.google.com/file/d/${m.media_id}/view` : mediaSrc;
+
+      if (m.media_type === "image" || m.media_type === "sticker") {
+        mediaHtml = `
+          <div class="msg-media">
+            <img src="${escapeHtml(mediaSrc)}" alt="Photo" onclick="openLightbox('${escapeHtml(mediaSrc)}')" />
+          </div>
+        `;
       } else if (m.media_type === "audio") {
-        mediaHtml = `<div class="msg-media"><audio controls preload="none" src="${escapeHtml(mediaSrc)}"></audio></div>`;
+        mediaHtml = `
+          <div class="msg-media-audio-box">
+            <div style="font-size:11px;font-weight:600;margin-bottom:2px;display:flex;align-items:center;gap:4px;color:#0284c7;">
+              <span>🎤 Voice Message</span>
+              <span style="font-size:10px;background:#e2e8f0;padding:1px 6px;border-radius:4px;color:#0f172a;">Google Drive</span>
+            </div>
+            <audio controls preload="metadata" src="${escapeHtml(mediaSrc)}" class="msg-media-audio"></audio>
+          </div>
+        `;
       } else if (m.media_type === "video") {
-        mediaHtml = `<div class="msg-media"><video controls preload="metadata" src="${escapeHtml(mediaSrc)}"></video></div>`;
+        mediaHtml = `
+          <div class="msg-media">
+            <video controls preload="metadata" src="${escapeHtml(mediaSrc)}" class="msg-media-video"></video>
+          </div>
+        `;
       } else if (m.media_type === "document") {
-        mediaHtml = `<div class="msg-media"><a href="${escapeHtml(mediaSrc)}" target="_blank" class="msg-media-doc">📄 Download File</a></div>`;
+        mediaHtml = `
+          <div class="msg-media">
+            <a href="${escapeHtml(driveViewLink)}" target="_blank" rel="noopener" class="msg-media-doc">
+              📄 Download Document (Google Drive)
+            </a>
+          </div>
+        `;
       }
     }
 
     const senderLabel = m.role === "user" && m.sender_name ? `<span class="msg-sender">${escapeHtml(m.sender_name)}</span>` : "";
-    const driveBadge = m.media_id ? `<span class="drive-badge" title="Stored in 5 TB Google Drive">☁️ Drive</span>` : "";
+    const driveBadge = m.media_id ? `<span class="drive-badge" title="Saved in 5 TB Google Drive">☁️ Drive</span>` : "";
+
+    const isPlaceholder =
+      m.media_type &&
+      (m.content === `[${m.media_type.toUpperCase()}]` ||
+        m.content === "🎤 Voice message" ||
+        m.content === "🎵 Audio" ||
+        m.content === "🎥 Video");
 
     bubble.innerHTML = `
       ${senderLabel}
+      ${quotedHtml}
       ${mediaHtml}
-      ${m.content ? `<div class="msg-text">${escapeHtml(m.content)}</div>` : ""}
+      ${m.content && !isPlaceholder ? `<div class="msg-text">${escapeHtml(m.content)}</div>` : ""}
       <div class="msg-meta">
         ${driveBadge}
         <span>${formatTimestamp(m.created_at)}</span>
@@ -392,9 +440,22 @@ function closeLightbox() {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function getInitials(name) {
   if (!name) return "WA";
-  const parts = name.trim().split(/\s+/);
+  const clean = name.replace(/[^\p{L}\p{N}\s]/gu, "").trim();
+  const parts = clean.split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-  return name.slice(0, 2).toUpperCase();
+  return clean.slice(0, 2).toUpperCase() || "WA";
+}
+
+function getAvatarColor(str) {
+  const colors = [
+    "#0284c7", "#059669", "#d97706", "#dc2626", "#7c3aed",
+    "#db2777", "#4f46e5", "#0891b2", "#65a30d", "#ea580c"
+  ];
+  let hash = 0;
+  for (let i = 0; i < (str || "WA").length; i++) {
+    hash = (str || "WA").charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
 }
 
 function formatPhone(p) {
