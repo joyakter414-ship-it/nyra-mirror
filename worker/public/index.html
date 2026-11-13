@@ -192,6 +192,16 @@
           <div id="messages-container" class="messages-scroll">
             <div class="empty-chat-state">No conversation selected</div>
           </div>
+
+          <!-- WhatsApp Chat Reply Bar -->
+          <form id="chat-reply-form" class="chat-reply-form hidden">
+            <input id="chat-reply-input" type="text" placeholder="Type a message to reply on WhatsApp…" autocomplete="off" />
+            <button type="submit" id="chat-reply-btn" class="chat-reply-submit" title="Send message">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
+              </svg>
+            </button>
+          </form>
         </main>
       </div>
     </section>

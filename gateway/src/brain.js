@@ -78,3 +78,11 @@ export async function recordMessage(accountId, message, chat) {
     },
   }).catch((err) => console.error(`[${accountId}] Message record failed:`, err.message));
 }
+
+export async function getOutbound(accountId) {
+  try {
+    return await brain("GET", `/api/gateway/outbound?account=${accountId}`);
+  } catch {
+    return null;
+  }
+}

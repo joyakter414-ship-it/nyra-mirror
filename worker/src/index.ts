@@ -181,6 +181,17 @@ export default {
         }
       }
 
+      // Gateway Outbound Message Polling (for dashboard replies)
+      if (path === "/api/gateway/outbound" && req.method === "GET") {
+        const account = url.searchParams.get("account") === "acc2" ? "acc2" : "acc1";
+        const key = `gateway_outbound_queue_${account}`;
+        const queue = (await kvGet<Array<{ id: string; jid: string; text: string }>>(env, key)) || [];
+        if (queue.length > 0) {
+          await kvSet(env, key, []); // clear queue once fetched
+        }
+        return jsonResponse({ outbound: queue });
+      }
+
       // Gateway Encrypted Session Store (R2 Bucket Sync)
       if (path === "/api/gateway/session") {
         const account = url.searchParams.get("account") === "acc2" ? "acc2" : "acc1";
@@ -248,6 +259,56 @@ export default {
 
         const messages = await listMessages(env, account, chatId, limit, before);
         return jsonResponse({ messages });
+      }
+
+      // Send direct message / reply to WhatsApp chat
+      if (path === "/api/messages/send" && req.method === "POST") {
+        try {
+          const body = (await req.json()) as { account?: string; chat?: string; text?: string };
+          const account = body.account === "acc2" ? "acc2" : "acc1";
+          const chat = (body.chat || "").trim();
+          const text = (body.text || "").trim();
+
+          if (!chat || !text) {
+            return jsonResponse({ error: "chat and text are required" }, 400);
+          }
+
+          const msgId = `dash_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const now = Date.now();
+
+          // 1. Immediately insert into DB for instant UI reflection
+          await recordMessage(env, {
+            id: msgId,
+            account_id: account,
+            chat_id: chat,
+            role: "assistant",
+            sender: "You",
+            sender_name: "You",
+            content: text,
+            source: "dashboard-reply",
+            created_at: now,
+          });
+
+          // 2. Update chat timestamp & snippet
+          await upsertChat(env, {
+            account_id: account,
+            chat_id: chat,
+            is_group: chat.includes("@g.us") ? 1 : 0,
+            last_at: now,
+            last_msg: text,
+            unread: 0,
+          });
+
+          // 3. Queue for gateway to dispatch via Baileys socket
+          const key = `gateway_outbound_queue_${account}`;
+          const queue = (await kvGet<Array<{ id: string; jid: string; text: string }>>(env, key)) || [];
+          queue.push({ id: msgId, jid: chat, text });
+          await kvSet(env, key, queue);
+
+          return jsonResponse({ ok: true, id: msgId, text, created_at: now });
+        } catch (e: any) {
+          return jsonResponse({ error: e.message }, 500);
+        }
       }
 
       // Disconnect / Reset Account

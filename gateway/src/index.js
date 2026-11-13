@@ -1,4 +1,4 @@
-// Nyra Mirror — Dual WhatsApp Cloud Gateway (Runs 24/7 on GitHub Cloud)
+// Nyra Mirror — Dual WhatsApp Cloud Gateway (Seamless 24/7 Cloud Engine)
 
 import makeWASocket, {
   Browsers,
@@ -14,8 +14,8 @@ import makeWASocket, {
 import pino from "pino";
 import QRCode from "qrcode";
 import qrTerminal from "qrcode-terminal";
-import { recordMessage, updateStatus, uploadMedia } from "./brain.js";
-import { getAuthDir, restoreSession, scheduleBackup, wipeSession } from "./session-store.js";
+import { getOutbound, recordMessage, updateStatus, uploadMedia } from "./brain.js";
+import { backupNow, getAuthDir, restoreSession, scheduleBackup } from "./session-store.js";
 
 const log = pino({ level: process.env.LOG_LEVEL || "info" });
 const waLog = log.child({ module: "baileys" }, { level: process.env.BAILEYS_LOG_LEVEL || "warn" });
@@ -87,25 +87,39 @@ class WhatsAppAccountManager {
         };
         log.info(`[${this.accountId}] ✅ ${this.label} connected as ${this.me.name} (${this.me.pn})`);
         await updateStatus(this.accountId, { state: "connected", me: this.me });
+        // Immediately persist session credentials to R2
+        await backupNow(this.accountId, log);
       }
 
       if (connection === "close") {
-        const statusCode = lastDisconnect?.error?.output?.statusCode;
-        const loggedOut = statusCode === DisconnectReason.loggedOut;
-        log.warn(`[${this.accountId}] Connection closed (code: ${statusCode}, loggedOut: ${loggedOut})`);
+        const code = lastDisconnect?.error?.output?.statusCode;
+        log.warn(`[${this.accountId}] Connection closed (code: ${code ?? "unknown"})`);
 
-        this.state = "disconnected";
-        await updateStatus(this.accountId, { state: "disconnected" });
-
-        if (loggedOut) {
-          log.info(`[${this.accountId}] Logged out. Wiping session.`);
-          await wipeSession(this.accountId, log);
-          this.reconnectAttempts = 0;
-          this.scheduleRestart(2000);
-        } else {
-          const delay = Math.min(30000, 1000 * Math.pow(1.5, this.reconnectAttempts++));
-          this.scheduleRestart(delay);
+        if (code === DisconnectReason.connectionReplaced) {
+          // Another runner instance took over this session (e.g. during 24/7 relay switchover)
+          // Do NOT mark status as disconnected in Cloudflare so UI stays seamlessly connected!
+          log.warn(`[${this.accountId}] Connection replaced by another gateway instance. Standing by.`);
+          this.scheduleRestart(60_000);
+          return;
         }
+
+        if (code === DisconnectReason.loggedOut) {
+          // Keep saved session safe in R2 - only delete from dashboard if user clicks Disconnect!
+          log.warn(`[${this.accountId}] Logged out reported by WhatsApp. Standing by; keeping remote session safe.`);
+          this.state = "disconnected";
+          await updateStatus(this.accountId, { state: "disconnected", error: "Session disconnected from WhatsApp" });
+          this.scheduleRestart(10_000);
+          return;
+        }
+
+        const isFastRetry =
+          code === DisconnectReason.restartRequired ||
+          code === DisconnectReason.timedOut ||
+          code === 408 ||
+          code === 515;
+        const delay = isFastRetry ? 1_000 : Math.min(5_000, 1_500 * Math.min(4, ++this.reconnectAttempts));
+        log.warn(`[${this.accountId}] Reconnecting in ${Math.round(delay / 1000)}s…`);
+        this.scheduleRestart(delay);
       }
     });
 
@@ -133,6 +147,33 @@ class WhatsAppAccountManager {
   scheduleRestart(delayMs) {
     clearTimeout(this.restartTimer);
     this.restartTimer = setTimeout(() => this.start(), delayMs);
+  }
+
+  async checkOutbound() {
+    if (!this.sock || this.state !== "connected") return;
+    try {
+      const res = await getOutbound(this.accountId);
+      if (Array.isArray(res?.outbound) && res.outbound.length > 0) {
+        for (const item of res.outbound) {
+          await this.sendOutboundItem(item);
+        }
+      }
+    } catch (err) {
+      log.debug(`[${this.accountId}] checkOutbound: ${err.message}`);
+    }
+  }
+
+  async sendOutboundItem(item) {
+    if (!item?.jid || !item?.text || !this.sock || this.state !== "connected") return;
+    try {
+      await this.sock.sendPresenceUpdate("composing", item.jid).catch(() => {});
+      await new Promise((r) => setTimeout(r, 300));
+      await this.sock.sendMessage(item.jid, { text: item.text });
+      await this.sock.sendPresenceUpdate("paused", item.jid).catch(() => {});
+      log.info(`[${this.accountId}] 📤 Sent message from dashboard to ${item.jid}: "${item.text.slice(0, 40)}"`);
+    } catch (err) {
+      log.error(`[${this.accountId}] Failed to send message to ${item.jid}: ${err.message}`);
+    }
   }
 
   async handleMessage(msg) {
@@ -288,10 +329,21 @@ async function main() {
 
   await Promise.all([manager1.start(), manager2.start()]);
 
-  // Keep process alive & send heartbeats every 30s
-  setInterval(() => {
-    log.debug(`[Heartbeat] Acc1: ${manager1.state}, Acc2: ${manager2.state}`);
-  }, 30000);
+  // 1. Continuous Heartbeat every 25 seconds so Cloudflare status never goes offline
+  setInterval(async () => {
+    if (manager1.state === "connected") {
+      await updateStatus("acc1", { state: "connected", me: manager1.me }).catch(() => {});
+    }
+    if (manager2.state === "connected") {
+      await updateStatus("acc2", { state: "connected", me: manager2.me }).catch(() => {});
+    }
+  }, 25_000);
+
+  // 2. Continuous Outbound Polling every 2 seconds for instant dashboard replies!
+  setInterval(async () => {
+    await manager1.checkOutbound();
+    await manager2.checkOutbound();
+  }, 2000);
 }
 
 main().catch((err) => {

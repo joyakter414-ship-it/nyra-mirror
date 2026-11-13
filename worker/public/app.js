@@ -117,6 +117,53 @@ function setupEventListeners() {
   $("#disconnect-btn-acc1").addEventListener("click", () => disconnectAccount("acc1"));
   $("#disconnect-btn-acc2").addEventListener("click", () => disconnectAccount("acc2"));
 
+  // WhatsApp Chat Reply Form
+  const replyForm = $("#chat-reply-form");
+  if (replyForm) {
+    replyForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = $("#chat-reply-input");
+      const text = input.value.trim();
+      if (!text || !activeChatId) return;
+
+      input.value = "";
+
+      // Optimistically append outgoing message to chat immediately
+      const container = $("#messages-container");
+      const bubble = document.createElement("div");
+      bubble.className = "msg-bubble msg-out";
+      bubble.innerHTML = `
+        <div class="msg-text">${escapeHtml(text)}</div>
+        <div class="msg-meta">
+          <span>${formatTimestamp(new Date().toISOString())}</span>
+          <span class="wa-ticks">✓</span>
+        </div>
+      `;
+      container.appendChild(bubble);
+      container.scrollTop = container.scrollHeight;
+
+      try {
+        const res = await fetch("/api/messages/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            account: activeAccount,
+            chat: activeChatId,
+            text,
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          console.error("Failed to send message:", data.error);
+        } else {
+          setTimeout(loadMessages, 1200);
+        }
+      } catch (err) {
+        console.error("Send error:", err);
+      }
+    });
+  }
+
   // Lightbox Close
   $("#lightbox-close").addEventListener("click", closeLightbox);
   $("#lightbox-modal").addEventListener("click", (e) => {
@@ -305,6 +352,13 @@ function selectChat(chat) {
     avatar.textContent = getInitials(displayName);
   }
 
+  // Show WhatsApp chat reply form
+  const replyForm = $("#chat-reply-form");
+  if (replyForm) {
+    replyForm.classList.remove("hidden");
+    $("#chat-reply-input")?.focus();
+  }
+
   loadMessages();
   clearInterval(chatPollTimer);
   chatPollTimer = setInterval(loadMessages, 3000);
@@ -317,6 +371,7 @@ function resetChatPane() {
   $("#chat-avatar").textContent = "WA";
   $("#chat-avatar").style.background = "#334155";
   $("#messages-container").innerHTML = `<div class="empty-chat-state">No conversation selected</div>`;
+  $("#chat-reply-form")?.classList.add("hidden");
 }
 
 async function loadMessages() {
