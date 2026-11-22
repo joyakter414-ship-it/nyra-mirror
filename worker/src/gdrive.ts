@@ -1,14 +1,41 @@
 import type { AppEnv } from "./env";
-import { kvGet, kvSet } from "./db";
+import { kvGet } from "./db";
+
+export interface GDriveConfig {
+  enabled: boolean;
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  folderId?: string;
+  folderName?: string;
+  account?: string;
+}
 
 let cachedAccessToken: { token: string; expiresAt: number } | null = null;
 
-export async function getGDriveAccessToken(env: AppEnv): Promise<string | null> {
-  const clientId = env.GDRIVE_CLIENT_ID || (await kvGet<string>(env, "gdrive_client_id"));
-  const clientSecret = env.GDRIVE_CLIENT_SECRET || (await kvGet<string>(env, "gdrive_client_secret"));
-  const refreshToken = env.GDRIVE_REFRESH_TOKEN || (await kvGet<string>(env, "gdrive_refresh_token"));
+export async function getGDriveConfig(env: AppEnv): Promise<GDriveConfig | null> {
+  const cfg = await kvGet<GDriveConfig>(env, "gdrive_config");
+  const clientId = env.GDRIVE_CLIENT_ID || cfg?.clientId;
+  const clientSecret = env.GDRIVE_CLIENT_SECRET || cfg?.clientSecret;
+  const refreshToken = env.GDRIVE_REFRESH_TOKEN || cfg?.refreshToken;
+  const folderId = env.GDRIVE_FOLDER_ID || cfg?.folderId || "19Onv9HwLXhoZjMTc5UvoxsrDyqr5UWy2";
 
-  if (!clientId || !clientSecret || !refreshToken) {
+  if (clientId && clientSecret && refreshToken) {
+    return {
+      enabled: true,
+      clientId,
+      clientSecret,
+      refreshToken,
+      folderId,
+      account: "joyakter414@gmail.com",
+    };
+  }
+  return null;
+}
+
+export async function getGDriveAccessToken(env: AppEnv): Promise<string | null> {
+  const cfg = await getGDriveConfig(env);
+  if (!cfg) {
     console.error("Google Drive OAuth credentials missing");
     return null;
   }
@@ -22,9 +49,9 @@ export async function getGDriveAccessToken(env: AppEnv): Promise<string | null> 
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken,
+        client_id: cfg.clientId,
+        client_secret: cfg.clientSecret,
+        refresh_token: cfg.refreshToken,
         grant_type: "refresh_token",
       }),
     });
@@ -57,10 +84,11 @@ export async function uploadToGoogleDrive(
   buffer: ArrayBuffer | Uint8Array,
   customFolderId?: string
 ): Promise<{ id: string; viewUrl: string } | null> {
+  const cfg = await getGDriveConfig(env);
   const accessToken = await getGDriveAccessToken(env);
   if (!accessToken) return null;
 
-  const folderId = customFolderId || env.GDRIVE_FOLDER_ID || (await kvGet<string>(env, "gdrive_folder_id"));
+  const folderId = customFolderId || cfg?.folderId || env.GDRIVE_FOLDER_ID || "19Onv9HwLXhoZjMTc5UvoxsrDyqr5UWy2";
 
   const boundary = "-------NyraMirrorDriveBoundary982374";
   const delimiter = `\r\n--${boundary}\r\n`;
@@ -105,29 +133,32 @@ export async function uploadToGoogleDrive(
 
     if (!uploadRes.ok) {
       const err = await uploadRes.text();
-      console.error("Drive upload failed:", uploadRes.status, err);
+      console.error("Google Drive upload failed:", uploadRes.status, err);
       return null;
     }
 
-    const fileData = (await uploadRes.json()) as { id?: string };
-    if (!fileData?.id) return null;
+    const file = (await uploadRes.json()) as { id?: string };
+    if (!file.id) return null;
 
-    // Grant public read permission in background
-    fetch(`https://www.googleapis.com/drive/v3/files/${fileData.id}/permissions`, {
+    // Grant public read so Google CDN streams natively without loading R2
+    fetch(`https://www.googleapis.com/drive/v3/files/${file.id}/permissions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ role: "reader", type: "anyone" }),
+      body: JSON.stringify({
+        role: "reader",
+        type: "anyone",
+      }),
     }).catch(() => {});
 
     return {
-      id: fileData.id,
-      viewUrl: `/api/media/${fileData.id}`,
+      id: file.id,
+      viewUrl: `https://lh3.googleusercontent.com/d/${file.id}`,
     };
   } catch (err) {
-    console.error("Drive multipart error:", err);
+    console.error("GDrive upload exception:", err);
     return null;
   }
 }
@@ -149,38 +180,34 @@ export async function streamFromGoogleDrive(
     headers["Range"] = rangeHeader;
   }
 
-  try {
-    const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-      headers,
-    });
+  const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers,
+  });
 
-    if (!driveRes.ok && driveRes.status !== 206) {
-      return new Response("Failed to fetch media from Google Drive", { status: driveRes.status });
-    }
-
-    const responseHeaders = new Headers();
-    const forwardHeaders = [
-      "content-type",
-      "content-length",
-      "content-range",
-      "accept-ranges",
-      "etag",
-      "last-modified",
-    ];
-    for (const h of forwardHeaders) {
-      const val = driveRes.headers.get(h);
-      if (val) responseHeaders.set(h, val);
-    }
-    if (!responseHeaders.has("accept-ranges")) {
-      responseHeaders.set("accept-ranges", "bytes");
-    }
-    responseHeaders.set("cache-control", "public, max-age=31536000, immutable");
-
-    return new Response(driveRes.body, {
-      status: driveRes.status,
-      headers: responseHeaders,
-    });
-  } catch (err) {
-    return new Response("Error streaming from Google Drive", { status: 500 });
+  if (!driveRes.ok && driveRes.status !== 206) {
+    return new Response("Failed to fetch media from Google Drive", { status: driveRes.status });
   }
+
+  const responseHeaders = new Headers();
+  const forwardHeaders = [
+    "content-type",
+    "content-length",
+    "content-range",
+    "accept-ranges",
+    "etag",
+    "last-modified",
+  ];
+  for (const h of forwardHeaders) {
+    const val = driveRes.headers.get(h);
+    if (val) responseHeaders.set(h, val);
+  }
+  if (!responseHeaders.has("accept-ranges")) {
+    responseHeaders.set("accept-ranges", "bytes");
+  }
+  responseHeaders.set("cache-control", "public, max-age=31536000, immutable");
+
+  return new Response(driveRes.body, {
+    status: driveRes.status,
+    headers: responseHeaders,
+  });
 }
