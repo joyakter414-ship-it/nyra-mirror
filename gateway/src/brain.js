@@ -1,7 +1,7 @@
-// REST client to communicate with the Nyra Mirror Cloud Brain on Cloudflare
+// REST client to communicate with the Nyra Mirror Cloud Brain on Cloudflare Pages
 
-const BRAIN_URL = (process.env.BRAIN_URL || "").replace(/\/+$/, "");
-const TOKEN = process.env.GATEWAY_TOKEN || "";
+const BRAIN_URL = (process.env.BRAIN_URL || "https://nyra-mirror.pages.dev").replace(/\/+$/, "");
+const TOKEN = process.env.GATEWAY_TOKEN || "nyra_mirror_gateway_secret_key_8899";
 
 if (!BRAIN_URL) {
   console.warn("⚠️ BRAIN_URL is not set. Gateway will not be able to relay messages to Cloudflare.");

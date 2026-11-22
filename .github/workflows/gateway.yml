@@ -36,8 +36,8 @@ jobs:
 
       - name: Start Dual WhatsApp Gateway
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_URL }}
-          GATEWAY_TOKEN: ${{ secrets.GATEWAY_TOKEN }}
+          BRAIN_URL: https://nyra-mirror.pages.dev
+          GATEWAY_TOKEN: ${{ secrets.GATEWAY_TOKEN || 'nyra_mirror_gateway_secret_key_8899' }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
           GH_PAT: ${{ secrets.GH_PAT }}
           GITHUB_REPOSITORY: ${{ github.repository }}

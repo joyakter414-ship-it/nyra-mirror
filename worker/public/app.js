@@ -1,4 +1,5 @@
 // Nyra Mirror — Dual WhatsApp Web Client
+// Solid Clean White WhatsApp Theme + Zero-Quota Waste Anti-Flicker Architecture
 
 let activeTab = "devices";
 let activeAccount = "acc1";
@@ -6,6 +7,8 @@ let activeChatId = null;
 let currentChats = [];
 let statusPollTimer = null;
 let chatPollTimer = null;
+let chatListPollTimer = null;
+let lastMessagesFingerprint = "";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
@@ -34,6 +37,7 @@ async function checkAuth() {
 function showLogin() {
   clearInterval(statusPollTimer);
   clearInterval(chatPollTimer);
+  clearInterval(chatListPollTimer);
   $("#login-section").classList.remove("hidden");
   $("#app").classList.add("hidden");
 }
@@ -45,6 +49,13 @@ function showApp(email) {
 
   startStatusPolling();
   loadChats();
+
+  // Relaxed background chat list refresh (every 20s if visible)
+  clearInterval(chatListPollTimer);
+  chatListPollTimer = setInterval(() => {
+    if (document.hidden) return;
+    if (activeTab === "chats") loadChats();
+  }, 20000);
 }
 
 // ─── Event Listeners ─────────────────────────────────────────────────────────
@@ -172,12 +183,28 @@ function setupEventListeners() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeLightbox();
   });
+
+  // Resume polling when user switches back to this browser tab
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      fetchStatus();
+      if (activeChatId) loadMessages();
+    }
+  });
 }
 
-// ─── Dual Status & QR Polling ────────────────────────────────────────────────
+// ─── Dual Status & QR Polling (Relaxed to save Cloudflare Quota) ─────────────
+let lastStatusStateAcc1 = "";
+let lastStatusStateAcc2 = "";
+
 function startStatusPolling() {
   fetchStatus();
-  statusPollTimer = setInterval(fetchStatus, 3000);
+  clearInterval(statusPollTimer);
+  // Status check every 15s to minimize Cloudflare requests
+  statusPollTimer = setInterval(() => {
+    if (document.hidden) return;
+    fetchStatus();
+  }, 15000);
 }
 
 async function fetchStatus() {
@@ -190,8 +217,11 @@ async function fetchStatus() {
     const data = await res.json();
     updateDeviceUI("acc1", data.acc1);
     updateDeviceUI("acc2", data.acc2);
+
+    lastStatusStateAcc1 = data.acc1?.state || "";
+    lastStatusStateAcc2 = data.acc2?.state || "";
   } catch (err) {
-    console.error("Status fetch error:", err);
+    console.warn("Status fetch warning:", err);
   }
 }
 
@@ -279,6 +309,7 @@ function switchAccount(accId) {
   $("#chat-account-indicator").textContent = accId === "acc1" ? "WhatsApp 1" : "WhatsApp 2";
 
   activeChatId = null;
+  lastMessagesFingerprint = "";
   resetChatPane();
   loadChats();
 }
@@ -337,6 +368,7 @@ function renderChatList(chats) {
 
 function selectChat(chat) {
   activeChatId = chat.chat_id;
+  lastMessagesFingerprint = ""; // Reset fingerprint for new chat!
   $$(".chat-item").forEach((el) => el.classList.remove("active"));
 
   const displayName = chat.name || chat.notify_name || formatPhone(chat.phone) || chat.chat_id.replace(/@.*$/, "");
@@ -359,9 +391,13 @@ function selectChat(chat) {
     $("#chat-reply-input")?.focus();
   }
 
-  loadMessages();
+  loadMessages(true);
   clearInterval(chatPollTimer);
-  chatPollTimer = setInterval(loadMessages, 3000);
+  // Gentle 6s message poll only when viewing this chat
+  chatPollTimer = setInterval(() => {
+    if (document.hidden) return;
+    loadMessages(false);
+  }, 6000);
 }
 
 function resetChatPane() {
@@ -374,113 +410,155 @@ function resetChatPane() {
   $("#chat-reply-form")?.classList.add("hidden");
 }
 
-async function loadMessages() {
+async function loadMessages(forceScroll = false) {
   if (!activeChatId) return;
-  const container = $("#messages-container");
-
   try {
     const res = await fetch(`/api/messages?account=${activeAccount}&chatId=${encodeURIComponent(activeChatId)}`);
     if (!res.ok) return;
     const data = await res.json();
-    renderMessages(data.messages || []);
+    renderMessages(data.messages || [], forceScroll);
   } catch (err) {
-    console.error("Messages load error:", err);
+    console.warn("Messages load warning:", err);
   }
 }
 
+// ─── Fingerprint for Anti-Flicker & Persistent Audio Playback ─────────────────
+function getMessagesFingerprint(messages) {
+  if (!messages || !messages.length) return "";
+  return messages.map((m) => `${m.id}:${m.created_at}:${m.deleted_at || 0}`).join("|");
+}
+
 // ─── Render Messages with Authentic WhatsApp In-Chat Media Experience ────────
-function renderMessages(messages) {
+function renderMessages(messages, forceScrollBottom = false) {
   const container = $("#messages-container");
   if (!messages || messages.length === 0) {
     container.innerHTML = `<div class="empty-chat-state">No messages in this chat</div>`;
+    lastMessagesFingerprint = "";
+    return;
+  }
+
+  const newFingerprint = getMessagesFingerprint(messages);
+  // If exact same messages and not forcing scroll, do NOT touch DOM (audio/video stays playing smoothly!)
+  if (!forceScrollBottom && newFingerprint === lastMessagesFingerprint) {
     return;
   }
 
   const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 120;
+  const prevScrollTop = container.scrollTop;
+  const prevScrollHeight = container.scrollHeight;
 
+  const existingBubbles = Array.from(container.querySelectorAll(".msg-bubble[data-id]"));
+  const canAppend =
+    !forceScrollBottom &&
+    existingBubbles.length > 0 &&
+    messages.length > existingBubbles.length &&
+    existingBubbles.every((b, i) => b.dataset.id === messages[i]?.id);
+
+  if (canAppend) {
+    const newItems = messages.slice(existingBubbles.length);
+    for (const m of newItems) {
+      container.appendChild(createMessageBubble(m));
+    }
+    lastMessagesFingerprint = newFingerprint;
+    if (isAtBottom) {
+      container.scrollTop = container.scrollHeight;
+    }
+    return;
+  }
+
+  // Full render
+  lastMessagesFingerprint = newFingerprint;
   container.innerHTML = "";
   messages.forEach((m) => {
-    const bubble = document.createElement("div");
-    const isOut = m.role === "assistant";
-    bubble.className = `msg-bubble ${isOut ? "msg-out" : "msg-in"}`;
-
-    // Quoted reply box (replies rendered neatly inside bubble)
-    let quotedHtml = "";
-    if (m.quoted_text) {
-      quotedHtml = `
-        <div class="msg-quoted">
-          <div class="msg-quoted-sender">${escapeHtml(m.quoted_sender || "Reply")}</div>
-          <div class="msg-quoted-text">${escapeHtml(m.quoted_text)}</div>
-        </div>
-      `;
-    }
-
-    // Media rendered 100% inside the chat bubble (like real WhatsApp on phone!)
-    let mediaHtml = "";
-    if (m.media_url || m.media_id) {
-      const mediaSrc = m.media_url || `/api/media/${m.media_id}`;
-
-      if (m.media_type === "image" || m.media_type === "sticker") {
-        mediaHtml = `
-          <div class="wa-image-box">
-            <img src="${escapeHtml(mediaSrc)}" alt="Photo" onclick="openLightbox('${escapeHtml(mediaSrc)}')" loading="lazy" />
-          </div>
-        `;
-      } else if (m.media_type === "audio") {
-        mediaHtml = `
-          <div class="wa-voice-bubble">
-            <div class="wa-voice-mic">🎤</div>
-            <div class="wa-voice-player">
-              <audio controls preload="metadata" src="${escapeHtml(mediaSrc)}"></audio>
-            </div>
-          </div>
-        `;
-      } else if (m.media_type === "video") {
-        mediaHtml = `
-          <div class="wa-video-box">
-            <video controls preload="metadata" src="${escapeHtml(mediaSrc)}"></video>
-          </div>
-        `;
-      } else if (m.media_type === "document") {
-        mediaHtml = `
-          <a href="${escapeHtml(mediaSrc)}" target="_blank" download class="wa-doc-box">
-            <div class="wa-doc-icon">📄</div>
-            <div class="wa-doc-info">
-              <div class="wa-doc-name">${escapeHtml(m.content || "Document")}</div>
-              <div class="wa-doc-sub">Tap to download / view</div>
-            </div>
-            <div class="wa-doc-arrow">⬇️</div>
-          </a>
-        `;
-      }
-    }
-
-    const senderLabel = !isOut && m.sender_name ? `<span class="msg-sender">${escapeHtml(m.sender_name)}</span>` : "";
-
-    const isPlaceholder =
-      m.media_type &&
-      (m.content === `[${m.media_type.toUpperCase()}]` ||
-        m.content === "🎤 Voice message" ||
-        m.content === "🎵 Audio" ||
-        m.content === "🎥 Video");
-
-    bubble.innerHTML = `
-      ${senderLabel}
-      ${quotedHtml}
-      ${mediaHtml}
-      ${m.content && !isPlaceholder ? `<div class="msg-text">${escapeHtml(m.content)}</div>` : ""}
-      <div class="msg-meta">
-        <span>${formatTimestamp(m.created_at)}</span>
-        ${isOut ? `<span class="wa-ticks">✓✓</span>` : ""}
-      </div>
-    `;
-
-    container.appendChild(bubble);
+    container.appendChild(createMessageBubble(m));
   });
 
-  if (isAtBottom) {
+  if (forceScrollBottom || isAtBottom) {
     container.scrollTop = container.scrollHeight;
+  } else {
+    const heightDiff = container.scrollHeight - prevScrollHeight;
+    container.scrollTop = prevScrollTop + (heightDiff > 0 ? heightDiff : 0);
   }
+}
+
+function createMessageBubble(m) {
+  const bubble = document.createElement("div");
+  const isOut = m.role === "assistant";
+  bubble.className = `msg-bubble ${isOut ? "msg-out" : "msg-in"}`;
+  if (m.id) bubble.dataset.id = m.id;
+
+  // Quoted reply box (replies rendered neatly inside bubble)
+  let quotedHtml = "";
+  if (m.quoted_text) {
+    quotedHtml = `
+      <div class="msg-quoted">
+        <div class="msg-quoted-sender">${escapeHtml(m.quoted_sender || "Reply")}</div>
+        <div class="msg-quoted-text">${escapeHtml(m.quoted_text)}</div>
+      </div>
+    `;
+  }
+
+  // Media rendered 100% inside the chat bubble (Lady Jane authentic WhatsApp experience)
+  let mediaHtml = "";
+  if (m.media_url || m.media_id) {
+    const mediaSrc = m.media_url || `/api/media/${m.media_id}`;
+
+    if (m.media_type === "image" || m.media_type === "sticker") {
+      mediaHtml = `
+        <div class="wa-image-box">
+          <img src="${escapeHtml(mediaSrc)}" alt="Photo" onclick="openLightbox('${escapeHtml(mediaSrc)}')" loading="lazy" />
+        </div>
+      `;
+    } else if (m.media_type === "audio") {
+      mediaHtml = `
+        <div class="wa-voice-bubble">
+          <div class="wa-voice-mic">🎤</div>
+          <div class="wa-voice-player">
+            <audio controls preload="metadata" src="${escapeHtml(mediaSrc)}"></audio>
+          </div>
+        </div>
+      `;
+    } else if (m.media_type === "video") {
+      mediaHtml = `
+        <div class="wa-video-box">
+          <video controls preload="metadata" src="${escapeHtml(mediaSrc)}"></video>
+        </div>
+      `;
+    } else if (m.media_type === "document") {
+      mediaHtml = `
+        <a href="${escapeHtml(mediaSrc)}" target="_blank" download class="wa-doc-box">
+          <div class="wa-doc-icon">📄</div>
+          <div class="wa-doc-info">
+            <div class="wa-doc-name">${escapeHtml(m.content || "Document")}</div>
+            <div class="wa-doc-sub">Tap to download / view</div>
+          </div>
+          <div class="wa-doc-arrow">⬇️</div>
+        </a>
+      `;
+    }
+  }
+
+  const senderLabel = !isOut && m.sender_name ? `<span class="msg-sender">${escapeHtml(m.sender_name)}</span>` : "";
+
+  const isPlaceholder =
+    m.media_type &&
+    (m.content === `[${m.media_type.toUpperCase()}]` ||
+      m.content === "🎤 Voice message" ||
+      m.content === "🎵 Audio" ||
+      m.content === "🎥 Video");
+
+  bubble.innerHTML = `
+    ${senderLabel}
+    ${quotedHtml}
+    ${mediaHtml}
+    ${m.content && !isPlaceholder ? `<div class="msg-text">${escapeHtml(m.content)}</div>` : ""}
+    <div class="msg-meta">
+      <span>${formatTimestamp(m.created_at)}</span>
+      ${isOut ? `<span class="wa-ticks">✓✓</span>` : ""}
+    </div>
+  `;
+
+  return bubble;
 }
 
 // ─── Lightbox Modal ──────────────────────────────────────────────────────────

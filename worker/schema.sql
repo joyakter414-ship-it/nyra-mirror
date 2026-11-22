@@ -1,21 +1,24 @@
 -- Nyra Mirror — Dual WhatsApp Cloud D1 Database Schema
+-- Matches Lady Jane architecture with Dual-Account support ('acc1' | 'acc2')
 
 CREATE TABLE IF NOT EXISTS messages (
-  id          TEXT NOT NULL,
-  account_id  TEXT NOT NULL CHECK (account_id IN ('acc1', 'acc2')),
-  chat_id     TEXT NOT NULL,
-  role        TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-  sender      TEXT,
-  sender_name TEXT,
-  content     TEXT NOT NULL,
-  source      TEXT NOT NULL DEFAULT 'whatsapp',
-  created_at  INTEGER NOT NULL,
-  media_type  TEXT,
-  media_url   TEXT,
-  media_id    TEXT,
-  media_mime  TEXT,
-  deleted_at  INTEGER DEFAULT 0,
-  deleted_by  TEXT,
+  id            TEXT NOT NULL,
+  account_id    TEXT NOT NULL CHECK (account_id IN ('acc1', 'acc2')),
+  chat_id       TEXT NOT NULL,
+  role          TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  sender        TEXT,
+  sender_name   TEXT,
+  content       TEXT NOT NULL,
+  source        TEXT NOT NULL DEFAULT 'whatsapp',
+  created_at    INTEGER NOT NULL,
+  media_type    TEXT,
+  media_url     TEXT,
+  media_id      TEXT,
+  media_mime    TEXT,
+  quoted_text   TEXT,
+  quoted_sender TEXT,
+  deleted_at    INTEGER DEFAULT 0,
+  deleted_by    TEXT,
   PRIMARY KEY (id, account_id)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_account_chat ON messages (account_id, chat_id, created_at);

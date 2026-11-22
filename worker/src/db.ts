@@ -45,86 +45,151 @@ export interface AccountStatus {
   error?: string | null;
 }
 
+// In-memory key-value cache to reduce D1 row reads and provide instant fallback
+const memKVCache = new Map<string, { val: any; time: number }>();
+
 export async function kvGet<T = string>(env: AppEnv, key: string): Promise<T | null> {
-  const row = await env.DB.prepare("SELECT value FROM kv WHERE key = ?").bind(key).first<{ value: string }>();
-  if (!row) return null;
-  try {
-    return JSON.parse(row.value) as T;
-  } catch {
-    return row.value as unknown as T;
+  const cached = memKVCache.get(key);
+  if (cached && Date.now() - cached.time < 5000) {
+    return cached.val as T;
   }
+
+  // 1. Try D1 Database
+  try {
+    if (env.DB) {
+      const row = await env.DB.prepare("SELECT value FROM kv WHERE key = ?").bind(key).first<{ value: string }>();
+      if (row) {
+        try {
+          const parsed = JSON.parse(row.value) as T;
+          memKVCache.set(key, { val: parsed, time: Date.now() });
+          return parsed;
+        } catch {
+          memKVCache.set(key, { val: row.value, time: Date.now() });
+          return row.value as unknown as T;
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[D1 kvGet warning for ${key}]:`, err?.message || err);
+  }
+
+  // 2. Return memory cache if previously stored
+  if (cached) {
+    return cached.val as T;
+  }
+
+  // 3. Fallback to R2 Bucket
+  try {
+    if (env.BUCKET) {
+      const obj = await env.BUCKET.get(`kv/${key}.json`);
+      if (obj) {
+        const text = await obj.text();
+        const parsed = JSON.parse(text) as T;
+        memKVCache.set(key, { val: parsed, time: Date.now() });
+        return parsed;
+      }
+    }
+  } catch {}
+
+  return null;
 }
 
 export async function kvSet(env: AppEnv, key: string, value: unknown): Promise<void> {
   const str = typeof value === "string" ? value : JSON.stringify(value);
-  await env.DB.prepare(
-    "INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
-  )
-    .bind(key, str, Date.now())
-    .run();
+  memKVCache.set(key, { val: value, time: Date.now() });
+
+  // 1. Try D1 Database
+  try {
+    if (env.DB) {
+      await env.DB.prepare(
+        "INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+      )
+        .bind(key, str, Date.now())
+        .run();
+    }
+  } catch (err: any) {
+    console.warn(`[D1 kvSet warning for ${key}]:`, err?.message || err);
+  }
+
+  // 2. Always persist to R2 Bucket as resilient backup
+  try {
+    if (env.BUCKET) {
+      await env.BUCKET.put(`kv/${key}.json`, str);
+    }
+  } catch {}
 }
 
 export async function recordMessage(env: AppEnv, m: DBMessage): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO messages (id, account_id, chat_id, role, sender, sender_name, content, source, created_at, media_type, media_url, media_id, media_mime, quoted_text, quoted_sender, deleted_at, deleted_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id, account_id) DO UPDATE SET
-       content = excluded.content,
-       media_url = coalesce(excluded.media_url, messages.media_url),
-       media_id = coalesce(excluded.media_id, messages.media_id),
-       quoted_text = coalesce(excluded.quoted_text, messages.quoted_text),
-       quoted_sender = coalesce(excluded.quoted_sender, messages.quoted_sender),
-       deleted_at = excluded.deleted_at,
-       deleted_by = excluded.deleted_by`
-  )
-    .bind(
-      m.id,
-      m.account_id,
-      m.chat_id,
-      m.role,
-      m.sender || null,
-      m.sender_name || null,
-      m.content,
-      m.source || "whatsapp",
-      m.created_at || Date.now(),
-      m.media_type || null,
-      m.media_url || null,
-      m.media_id || null,
-      m.media_mime || null,
-      m.quoted_text || null,
-      m.quoted_sender || null,
-      m.deleted_at || 0,
-      m.deleted_by || null
+  try {
+    if (!env.DB) return;
+    await env.DB.prepare(
+      `INSERT INTO messages (id, account_id, chat_id, role, sender, sender_name, content, source, created_at, media_type, media_url, media_id, media_mime, quoted_text, quoted_sender, deleted_at, deleted_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id, account_id) DO UPDATE SET
+         content = excluded.content,
+         media_url = coalesce(excluded.media_url, messages.media_url),
+         media_id = coalesce(excluded.media_id, messages.media_id),
+         quoted_text = coalesce(excluded.quoted_text, messages.quoted_text),
+         quoted_sender = coalesce(excluded.quoted_sender, messages.quoted_sender),
+         deleted_at = excluded.deleted_at,
+         deleted_by = excluded.deleted_by`
     )
-    .run();
+      .bind(
+        m.id,
+        m.account_id,
+        m.chat_id,
+        m.role,
+        m.sender || null,
+        m.sender_name || null,
+        m.content,
+        m.source || "whatsapp",
+        m.created_at || Date.now(),
+        m.media_type || null,
+        m.media_url || null,
+        m.media_id || null,
+        m.media_mime || null,
+        m.quoted_text || null,
+        m.quoted_sender || null,
+        m.deleted_at || 0,
+        m.deleted_by || null
+      )
+      .run();
+  } catch (err: any) {
+    console.error(`[recordMessage error]:`, err?.message || err);
+  }
 }
 
 export async function upsertChat(env: AppEnv, c: DBChat): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO chats (account_id, chat_id, name, is_group, last_at, last_msg, notify_name, phone, avatar_url, unread)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(account_id, chat_id) DO UPDATE SET
-       name = coalesce(excluded.name, chats.name),
-       last_at = max(chats.last_at, excluded.last_at),
-       last_msg = coalesce(excluded.last_msg, chats.last_msg),
-       notify_name = coalesce(excluded.notify_name, chats.notify_name),
-       phone = coalesce(excluded.phone, chats.phone),
-       avatar_url = coalesce(excluded.avatar_url, chats.avatar_url),
-       unread = excluded.unread`
-  )
-    .bind(
-      c.account_id,
-      c.chat_id,
-      c.name || null,
-      c.is_group ? 1 : 0,
-      c.last_at,
-      c.last_msg || null,
-      c.notify_name || null,
-      c.phone || null,
-      c.avatar_url || null,
-      c.unread || 0
+  try {
+    if (!env.DB) return;
+    await env.DB.prepare(
+      `INSERT INTO chats (account_id, chat_id, name, is_group, last_at, last_msg, notify_name, phone, avatar_url, unread)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(account_id, chat_id) DO UPDATE SET
+         name = coalesce(excluded.name, chats.name),
+         last_at = max(chats.last_at, excluded.last_at),
+         last_msg = coalesce(excluded.last_msg, chats.last_msg),
+         notify_name = coalesce(excluded.notify_name, chats.notify_name),
+         phone = coalesce(excluded.phone, chats.phone),
+         avatar_url = coalesce(excluded.avatar_url, chats.avatar_url),
+         unread = excluded.unread`
     )
-    .run();
+      .bind(
+        c.account_id,
+        c.chat_id,
+        c.name || null,
+        c.is_group ? 1 : 0,
+        c.last_at,
+        c.last_msg || null,
+        c.notify_name || null,
+        c.phone || null,
+        c.avatar_url || null,
+        c.unread || 0
+      )
+      .run();
+  } catch (err: any) {
+    console.error(`[upsertChat error]:`, err?.message || err);
+  }
 }
 
 export async function listChats(
@@ -133,20 +198,26 @@ export async function listChats(
   search?: string | null,
   limit = 100
 ): Promise<DBChat[]> {
-  let query = "SELECT * FROM chats WHERE account_id = ?";
-  const params: unknown[] = [accountId];
+  try {
+    if (!env.DB) return [];
+    let query = "SELECT * FROM chats WHERE account_id = ?";
+    const params: unknown[] = [accountId];
 
-  if (search && search.trim()) {
-    query += " AND (name LIKE ? OR notify_name LIKE ? OR phone LIKE ? OR chat_id LIKE ?)";
-    const term = `%${search.trim()}%`;
-    params.push(term, term, term, term);
+    if (search && search.trim()) {
+      query += " AND (name LIKE ? OR notify_name LIKE ? OR phone LIKE ? OR chat_id LIKE ?)";
+      const term = `%${search.trim()}%`;
+      params.push(term, term, term, term);
+    }
+
+    query += " ORDER BY last_at DESC LIMIT ?";
+    params.push(limit);
+
+    const res = await env.DB.prepare(query).bind(...params).all<DBChat>();
+    return res.results || [];
+  } catch (err: any) {
+    console.warn(`[listChats warning]:`, err?.message || err);
+    return [];
   }
-
-  query += " ORDER BY last_at DESC LIMIT ?";
-  params.push(limit);
-
-  const res = await env.DB.prepare(query).bind(...params).all<DBChat>();
-  return res.results || [];
 }
 
 export async function listMessages(
@@ -156,20 +227,25 @@ export async function listMessages(
   limit = 100,
   before?: number | null
 ): Promise<DBMessage[]> {
-  let query = "SELECT * FROM messages WHERE account_id = ? AND chat_id = ?";
-  const params: unknown[] = [accountId, chatId];
+  try {
+    if (!env.DB) return [];
+    let query = "SELECT * FROM messages WHERE account_id = ? AND chat_id = ?";
+    const params: unknown[] = [accountId, chatId];
 
-  if (before && before > 0) {
-    query += " AND created_at < ?";
-    params.push(before);
+    if (before && before > 0) {
+      query += " AND created_at < ?";
+      params.push(before);
+    }
+
+    query += " ORDER BY created_at DESC LIMIT ?";
+    params.push(limit);
+
+    const res = await env.DB.prepare(query).bind(...params).all<DBMessage>();
+    return (res.results || []).reverse();
+  } catch (err: any) {
+    console.warn(`[listMessages warning]:`, err?.message || err);
+    return [];
   }
-
-  query += " ORDER BY created_at DESC LIMIT ?";
-  params.push(limit);
-
-  const res = await env.DB.prepare(query).bind(...params).all<DBMessage>();
-  // Return in chronological order
-  return (res.results || []).reverse();
 }
 
 export async function getAccountStatus(env: AppEnv, accountId: "acc1" | "acc2"): Promise<AccountStatus> {

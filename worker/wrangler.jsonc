@@ -1,12 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "nyra-mirror",
-  "main": "src/index.ts",
+  "pages_build_output_dir": "./public",
   "compatibility_date": "2026-09-01",
-  "assets": {
-    "directory": "./public",
-    "binding": "ASSETS"
-  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "d1_databases": [
     {
       "binding": "DB",
@@ -22,6 +21,8 @@
   ],
   "vars": {
     "ADMIN_EMAIL": "joyakter414@gmail.com",
+    "ADMIN_PASSWORD": "joy12345",
+    "GATEWAY_TOKEN": "nyra_mirror_gateway_secret_key_8899",
     "GDRIVE_FOLDER_ID": "19Onv9HwLXhoZjMTc5UvoxsrDyqr5UWy2"
   },
   "observability": {

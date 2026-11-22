@@ -1,15 +1,16 @@
 // Nyra Mirror — Dual WhatsApp Cloud Gateway (Seamless 24/7 Cloud Engine)
+// Zero-Quota Exhaustion Mode: Event-Driven Outbound Dispatching & Credential Safety
 
 import makeWASocket, {
   Browsers,
   DisconnectReason,
-  downloadMediaMessage,
   fetchLatestBaileysVersion,
-  isJidGroup,
+  jidDecode,
   jidNormalizedUser,
   makeCacheableSignalKeyStore,
   normalizeMessageContent,
   useMultiFileAuthState,
+  isJidGroup,
 } from "@whiskeysockets/baileys";
 import pino from "pino";
 import QRCode from "qrcode";
@@ -26,7 +27,7 @@ class WhatsAppAccountManager {
     this.label = label;
     this.sock = null;
     this.state = "starting";
-    this.me = { pn: null, lid: null, name: null };
+    this.me = null;
     this.reconnectAttempts = 0;
     this.restartTimer = null;
     this.contacts = new Map();
@@ -34,46 +35,48 @@ class WhatsAppAccountManager {
 
   async start() {
     clearTimeout(this.restartTimer);
-    this.state = "connecting";
-    await updateStatus(this.accountId, { state: "connecting" });
+    log.info(`[${this.accountId}] 🚀 Starting ${this.label}...`);
 
-    log.info(`[${this.accountId}] Starting ${this.label}...`);
+    // 1. Restore encrypted session from Cloudflare R2 if not present locally
     await restoreSession(this.accountId, log);
 
     const authDir = getAuthDir(this.accountId);
-    const { state: auth, saveCreds } = await useMultiFileAuthState(authDir);
-
-    const keys = {
-      get: (type, ids) => auth.keys.get(type, ids),
-      set: async (data) => {
-        await auth.keys.set(data);
-        scheduleBackup(this.accountId, log);
-      },
-    };
-
-    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
+    const { state: authState, saveCreds } = await useMultiFileAuthState(authDir);
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    log.info(`[${this.accountId}] Using WA v${version.join(".")} (latest: ${isLatest})`);
 
     this.sock = makeWASocket({
       version,
-      auth: { creds: auth.creds, keys: makeCacheableSignalKeyStore(keys, waLog) },
+      auth: {
+        creds: authState.creds,
+        keys: makeCacheableSignalKeyStore(authState.keys, waLog),
+      },
+      printQRInTerminal: false,
       logger: waLog,
-      browser: Browsers.ubuntu("Chrome"),
-      markOnlineOnConnect: false,
+      browser: Browsers.macOS("Desktop"),
       syncFullHistory: false,
-      getMessage: async () => undefined,
+      generateHighQualityLinkPreview: false,
+      markOnlineOnConnect: true,
+      connectTimeoutMs: 60_000,
+      defaultQueryTimeoutMs: 60_000,
+      keepAliveIntervalMs: 25_000,
     });
 
+    // Auto-save credentials & sync to Cloudflare R2
     this.sock.ev.on("creds.update", async () => {
       await saveCreds();
       scheduleBackup(this.accountId, log);
     });
 
-    this.sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
+    // Connection lifecycle
+    this.sock.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
       if (qr) {
-        log.info(`[${this.accountId}] QR Code generated for ${this.label}:`);
-        qrTerminal.generate(qr, { small: true });
-        const qrDataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 320 });
         this.state = "qr";
+        log.info(`[${this.accountId}] 📱 New QR code generated. Updating dashboard...`);
+        qrTerminal.generate(qr, { small: true });
+        const qrDataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 300 });
         await updateStatus(this.accountId, { state: "qr", qr: qrDataUrl });
       }
 
@@ -104,20 +107,16 @@ class WhatsAppAccountManager {
         }
 
         if (code === DisconnectReason.loggedOut) {
-          // Keep saved session safe in R2 - only delete from dashboard if user clicks Disconnect!
+          // Absolute Credential Safety: Keep saved session safe in R2 - only delete if user clicks Disconnect in UI!
           log.warn(`[${this.accountId}] Logged out reported by WhatsApp. Standing by; keeping remote session safe.`);
           this.state = "disconnected";
           await updateStatus(this.accountId, { state: "disconnected", error: "Session disconnected from WhatsApp" });
-          this.scheduleRestart(10_000);
+          this.scheduleRestart(30_000);
           return;
         }
 
-        const isFastRetry =
-          code === DisconnectReason.restartRequired ||
-          code === DisconnectReason.timedOut ||
-          code === 408 ||
-          code === 515;
-        const delay = isFastRetry ? 1_000 : Math.min(5_000, 1_500 * Math.min(4, ++this.reconnectAttempts));
+        // Exponential backoff (15s–30s) instead of rapid 1s loops
+        const delay = Math.min(30_000, 15_000 * Math.max(1, Math.min(2, ++this.reconnectAttempts)));
         log.warn(`[${this.accountId}] Reconnecting in ${Math.round(delay / 1000)}s…`);
         this.scheduleRestart(delay);
       }
@@ -133,7 +132,7 @@ class WhatsAppAccountManager {
     });
 
     // Messages sync
-    this.sock.ev.on("messages.upsert", async ({ messages, type }) => {
+    this.sock.ev.on("messages.upsert", async ({ messages }) => {
       for (const msg of messages) {
         try {
           await this.handleMessage(msg);
@@ -149,6 +148,7 @@ class WhatsAppAccountManager {
     this.restartTimer = setTimeout(() => this.start(), delayMs);
   }
 
+  // Relaxed outbound check: called on gentle fallback or on message arrival
   async checkOutbound() {
     if (!this.sock || this.state !== "connected") return;
     try {
@@ -200,73 +200,62 @@ class WhatsAppAccountManager {
       mediaType = "image";
       mediaMime = content.imageMessage.mimetype || "image/jpeg";
       text = content.imageMessage.caption || "";
-      mediaFilename = `wa_img_${Date.now()}.jpg`;
+      mediaFilename = `img_${Date.now()}.jpg`;
     } else if (content.videoMessage) {
       mediaType = "video";
       mediaMime = content.videoMessage.mimetype || "video/mp4";
       text = content.videoMessage.caption || "";
-      mediaFilename = `wa_vid_${Date.now()}.mp4`;
+      mediaFilename = `vid_${Date.now()}.mp4`;
     } else if (content.audioMessage) {
       mediaType = "audio";
-      mediaMime = content.audioMessage.mimetype || "audio/ogg";
-      mediaFilename = `wa_audio_${Date.now()}.ogg`;
+      mediaMime = content.audioMessage.mimetype || "audio/ogg; codecs=opus";
+      text = content.audioMessage.ptt ? "🎤 Voice message" : "🎵 Audio";
+      mediaFilename = `aud_${Date.now()}.ogg`;
     } else if (content.documentMessage) {
       mediaType = "document";
       mediaMime = content.documentMessage.mimetype || "application/octet-stream";
-      text = content.documentMessage.title || content.documentMessage.fileName || "";
-      mediaFilename = content.documentMessage.fileName || `wa_doc_${Date.now()}`;
+      text = content.documentMessage.fileName || content.documentMessage.title || "Document";
+      mediaFilename = content.documentMessage.fileName || `doc_${Date.now()}`;
     } else if (content.stickerMessage) {
       mediaType = "sticker";
       mediaMime = content.stickerMessage.mimetype || "image/webp";
-      mediaFilename = `wa_stk_${Date.now()}.webp`;
+      text = "🎨 Sticker";
+      mediaFilename = `stk_${Date.now()}.webp`;
     }
 
-    // Quoted reply extraction
-    const ctx =
+    // Extract quoted context if message is a reply
+    let quotedText = null;
+    let quotedSender = null;
+    const contextInfo =
       content.extendedTextMessage?.contextInfo ||
       content.imageMessage?.contextInfo ||
       content.videoMessage?.contextInfo ||
       content.audioMessage?.contextInfo ||
-      content.documentMessage?.contextInfo ||
-      content.stickerMessage?.contextInfo;
+      content.documentMessage?.contextInfo;
 
-    let quotedText = null;
-    let quotedSender = null;
-    if (ctx?.quotedMessage) {
-      const qContent = normalizeMessageContent(ctx.quotedMessage);
-      quotedText =
-        qContent?.conversation ||
-        qContent?.extendedTextMessage?.text ||
-        qContent?.imageMessage?.caption ||
-        qContent?.videoMessage?.caption ||
-        (qContent?.imageMessage
-          ? "[PHOTO]"
-          : qContent?.audioMessage
-          ? "[VOICE NOTE]"
-          : qContent?.videoMessage
-          ? "[VIDEO]"
-          : qContent?.documentMessage
-          ? "[DOCUMENT]"
-          : "[MESSAGE]");
-      quotedSender = ctx.participant
-        ? this.contacts.get(ctx.participant) || ctx.participant.replace(/@.*$/, "")
-        : null;
+    if (contextInfo?.quotedMessage) {
+      const q = normalizeMessageContent(contextInfo.quotedMessage);
+      if (q?.conversation) quotedText = q.conversation;
+      else if (q?.extendedTextMessage?.text) quotedText = q.extendedTextMessage.text;
+      else if (q?.imageMessage) quotedText = "📷 Photo";
+      else if (q?.videoMessage) quotedText = "🎥 Video";
+      else if (q?.audioMessage) quotedText = "🎤 Voice message";
+      else if (q?.documentMessage) quotedText = "📄 Document";
+      else if (q?.stickerMessage) quotedText = "🎨 Sticker";
+
+      const qParticipant = contextInfo.participant;
+      if (qParticipant) {
+        quotedSender = this.contacts.get(qParticipant) || `+${qParticipant.replace(/@.*$/, "")}`;
+      }
     }
 
+    // Download media buffer if present (up to 20MB)
     let mediaUrl = null;
     let mediaId = null;
-
-    // Download media & store to Google Drive via Brain!
-    if (mediaType && (content.imageMessage || content.videoMessage || content.audioMessage || content.documentMessage)) {
+    if (mediaType) {
       try {
-        log.info(`[${this.accountId}] Downloading media (${mediaType})...`);
-        mediaBuffer = await downloadMediaMessage(
-          msg,
-          "buffer",
-          {},
-          { logger: waLog, reuploadRequest: this.sock.updateMediaMessage }
-        );
-
+        const { downloadMediaMessage } = await import("@whiskeysockets/baileys");
+        mediaBuffer = await downloadMediaMessage(msg, "buffer", {}, { logger: waLog });
         if (mediaBuffer && mediaBuffer.length > 0) {
           log.info(`[${this.accountId}] Uploading ${mediaBuffer.length} bytes to Google Drive...`);
           const uploadRes = await uploadMedia(mediaFilename, mediaMime, mediaBuffer);
@@ -316,7 +305,13 @@ class WhatsAppAccountManager {
       unread: isFromMe ? 0 : 1,
     };
 
-    await recordMessage(this.accountId, messageRecord, chatRecord);
+    // Event-driven: recordMessage response returns pending outbound queue
+    const res = await recordMessage(this.accountId, messageRecord, chatRecord);
+    if (Array.isArray(res?.outbound) && res.outbound.length > 0) {
+      for (const item of res.outbound) {
+        await this.sendOutboundItem(item);
+      }
+    }
   }
 }
 
@@ -329,21 +324,16 @@ async function main() {
 
   await Promise.all([manager1.start(), manager2.start()]);
 
-  // 1. Continuous Heartbeat every 25 seconds so Cloudflare status never goes offline
+  // Gentle fallback timer: checks outbound messages every 60s ONLY if connected
+  // (In idle state, ZERO request spam to Cloudflare!)
   setInterval(async () => {
     if (manager1.state === "connected") {
-      await updateStatus("acc1", { state: "connected", me: manager1.me }).catch(() => {});
+      await manager1.checkOutbound();
     }
     if (manager2.state === "connected") {
-      await updateStatus("acc2", { state: "connected", me: manager2.me }).catch(() => {});
+      await manager2.checkOutbound();
     }
-  }, 25_000);
-
-  // 2. Continuous Outbound Polling every 2 seconds for instant dashboard replies!
-  setInterval(async () => {
-    await manager1.checkOutbound();
-    await manager2.checkOutbound();
-  }, 2000);
+  }, 60_000);
 }
 
 main().catch((err) => {

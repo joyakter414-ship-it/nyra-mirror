@@ -2,14 +2,15 @@
   "name": "nyra-mirror-worker",
   "version": "1.0.0",
   "private": true,
-  "description": "Nyra Mirror: Dual WhatsApp Cloud Backend & Media Streamer",
+  "description": "Nyra Mirror: Dual WhatsApp Cloud Backend & Media Streamer on Cloudflare Pages",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "build": "esbuild src/index.ts --bundle --format=esm --target=es2022 --outfile=public/_worker.js",
+    "deploy": "npm run build && wrangler pages deploy public --project-name nyra-mirror --branch main",
     "types": "wrangler types"
   },
   "devDependencies": {
+    "esbuild": "^0.28.0",
     "typescript": "^5.7.0",
     "wrangler": "^4.158.0"
   }
